@@ -53,6 +53,34 @@ container runtime (350 MB / 1 CPU shared):
 
 The split exists because both ingest and training transiently allocate hundreds of MB to GBs — impossible inside the 350MB total runtime budget. Doing them on the unconstrained host once and shipping the artifact sidesteps the whole problem.
 
+### Building `vec1` (two archs, two builds)
+
+The `vec1` source ships **only AVX2 intrinsics** (hand-written Intel SIMD, 256-bit). There is no NEON path. So:
+
+- **Local dev on Apple Silicon (arm64-darwin):** build pure scalar. Leave `VEC1SIMD` undefined entirely — that disables the AVX2 code paths *and* the runtime-CPU-detection helper (`__builtin_cpu_supports("avx2")` is an x86-only Clang/GCC builtin that fails to compile on arm64). Apple Clang will still auto-vectorize the scalar loops to NEON under `-O3`, just not as well as hand-tuned intrinsics. At 14 dimensions the difference is irrelevant.
+
+  ```bash
+  cd vendor/vec1
+  cc -O3 -DNDEBUG -I/opt/homebrew/opt/sqlite/include vec1.c -shared -fPIC -Wl,-undefined,dynamic_lookup -o vec1.dylib
+  ```
+
+  The `-Wl,-undefined,dynamic_lookup` is macOS-specific: SQLite extension symbols are resolved at load time by the host, but macOS's linker is strict by default and refuses to leave them unresolved. Linux's `ld` allows it implicitly, so the Dockerfile build doesn't need this flag.
+
+  **Critical: the `-I/opt/homebrew/opt/sqlite/include` is not optional.** Without it, the compiler picks up Apple's SDK `sqlite3ext.h`, which targets SQLite 3.43.2 — the version Xcode shipped. The Ruby `sqlite3` gem and `node:sqlite` both bundle SQLite 3.53.x. The `sqlite3_api_routines` struct layout differs between versions, so vec1 compiled against 3.43 headers reads function pointers at the wrong offsets when loaded by a 3.53.x host → calls a garbage address → segfault that looks like a vec1 bug but isn't. Always compile vec1 against headers that match (or are newer than) the runtime SQLite. Homebrew's `/opt/homebrew/opt/sqlite/include` is the easiest match. Symptom of this trap: the same `.dylib` works fine in `/opt/homebrew/opt/sqlite/bin/sqlite3` CLI but segfaults inside Ruby/Node.
+
+- **Production container (x86_64 Linux):** build with AVX2 per the upstream Makefile.
+
+  ```bash
+  gcc -O3 -DNDEBUG -mavx2 -mfma vec1.c -shared -fPIC -o vec1.so
+  ```
+
+  No `-DVEC1SIMD=...` needed — the default AVX2-only path is fine since we control the target CPU.
+
+**What `VEC1SIMD` actually does** (so future-you doesn't need to re-read the source):
+- `VEC1SIMD=AVX2` — AVX2-only binary. Crashes on CPUs without AVX2.
+- `VEC1SIMD=SCALAR` — half of a multi-arch binary. Meant to be compiled twice (once SCALAR, once AVX2) and linked into one `.so` with runtime CPU detection. Requires `__builtin_cpu_supports` — x86-only, doesn't compile on arm64.
+- `VEC1SIMD` undefined — pure scalar. Portable, no runtime detection. Use this on arm64.
+
 ### Dockerfile shape
 
 Multi-stage build:
@@ -73,6 +101,56 @@ This keeps the final image to: Ruby + libjemalloc + libsqlite3 + the app + the p
 - Accept that results are approximate. The label vote is robust to a few missed neighbors, and the RAM win is non-negotiable.
 
 **Never** parse the JSON dataset at boot or in the request path. JSON in, SQLite out, done once.
+
+#### How training actually works
+
+Two things are learned, both by k-means over a sample (~100k vectors is plenty):
+
+1. **IVF bucket centroids.** All vectors get clustered into `nbucket` groups. At query time, only the nearest few buckets are scanned (`nprobe`), not the whole dataset.
+2. **Product-quantization codebook.** Each vector is split into sub-vectors; for each sub-vector position vec1 learns a 256-entry dictionary. Stored vectors become sequences of dictionary indices (1 byte each) instead of raw floats. This is where the ~7× compression comes from (56 bytes → 8 bytes for `codesize:8`).
+
+The on-disk `fraud.db` after training contains, all in one file: the PQ-coded vectors, the PQ codebook, the IVF centroids, the OPQ rotation matrix (if `opq:true`), and the `is_fraud` labels.
+
+**The two SQL steps `bin/train.rb` runs:**
+
+```sql
+-- 1. Train: aggregate over a uniformly-random sample, get back a model blob.
+-- ORDER BY RANDOM() is required — bare LIMIT returns rows in insertion order,
+-- which biases the sample if ingest order had any structure.
+WITH sample(vector) AS (
+  SELECT vector FROM vectors ORDER BY RANDOM() LIMIT 300000
+)
+SELECT vec1_train(vector, '{
+  distance: "l2",
+  nbucket: 512,
+  codesize: 8,
+  opq: true
+}') FROM sample;
+
+-- 2. Install: a magic "command insert" the vec1 vtable understands.
+INSERT INTO vectors(cmd, arg) VALUES ('rebuild', :model_blob);
+```
+
+**Sample-size sanity check.** FAISS's rule of thumb for training is ~30–100× the number of centroids being fit. At `nbucket:512` and `codesize:8` (which fits 8 PQ codebooks of 256 entries each), the IVF step is the binding constraint: 512 buckets × 30–100 ≈ 15k–50k minimum, with more giving more stable centroids. 300k is comfortable. The PQ side wants ~8k–25k and is over-served. If `nbucket:1024` is used instead, bump the sample to 500k+. The `ORDER BY RANDOM()` adds a few seconds offline — never optimize it away.
+
+`vec1_train` is an aggregate function. `('rebuild', :model)` reorganizes the table: raw floats out, PQ codes in, codebook + centroids embedded.
+
+**Training knobs:**
+
+| Param | Meaning | For this project |
+|---|---|---|
+| `distance` | `"l2"` or `"cos"` | `"l2"` |
+| `nbucket` | number of IVF buckets — rule of thumb is roughly √N | 512–1024 |
+| `codesize` | bytes per PQ code per vector — lower is more compression, less accuracy | `8` (7× compression at 14 dims) |
+| `opq` | learn an extra rotation to improve quantization quality | `true` |
+
+**Query knob added by training:**
+
+```sql
+SELECT is_fraud FROM vectors(:query_blob, '{k:25, nprobe:8}');
+```
+
+`nprobe` = how many buckets to scan per query. Higher → closer to brute force (slower, more accurate). Lower → faster, more approximate. `nprobe:8` over `nbucket:1024` scans ~0.8% of the data per query. Tune against the test set.
 
 ### App layer — Puma
 

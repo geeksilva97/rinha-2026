@@ -1,0 +1,97 @@
+# 2026-01-17
+#
+# The author disclaims copyright to this source code.  In place of
+# a legal notice, here is a blessing:
+#
+#    May you do good and not evil.
+#    May you find forgiveness for yourself and forgive others.
+#    May you share freely, never taking more than you give.
+#
+#***********************************************************************
+#
+#
+
+source [file join [file dirname [info script]] vec1_common.tcl]
+set testprefix vec1meta3
+vec1_load db
+
+proc create_table {name nMeta} {
+  set meta ""
+  for {set i 0} {$i<$nMeta} {incr i} {
+    append meta ", m$i"
+  }
+  execsql "CREATE VIRTUAL TABLE $name USING vec1(v $meta)"
+}
+
+do_test 1.0 {
+  create_table v1 100
+} {}
+
+do_test 1.1 {
+  create_table v2 256
+} {}
+
+do_test 1.2 {
+  list [catch { create_table v3 257 } msg] $msg
+} {1 {too many meta-data columns (max is 256)}}
+
+do_test 1.3 {
+  set vals ""
+  for {set i 0} {$i<256} {incr i} {
+    append vals ", $i"
+  }
+  execsql "INSERT INTO v2 VALUES( random_vector(8) $vals )"
+} {}
+
+do_test 1.4 {
+  for {set i 0} {$i<256} {incr i} {
+    set r [execsql "SELECT rowid FROM v2( random_vector(8), 1 ) WHERE m$i = $i"]
+    if {$r!="1"} { error "unexpected: $r" }
+  }
+  set {} {}
+} {}
+
+do_execsql_test 1.5 {
+  SELECT rowid FROM v2( random_vector(8), 1 ) 
+  WHERE m1 = 1 AND m2 = 2 AND m5 = 5 AND m4 = 4 AND m3 = 3;
+} {1}
+
+#-------------------------------------------------------------------------
+reset_db
+vec1_load db
+
+do_execsql_test 2.0 {
+  CREATE VIRTUAL TABLE x1 USING vec1(v, a, b);
+  CREATE TABLE t1(z);
+
+  INSERT INTO x1 VALUES(random_vector(8), 10, 20);
+  INSERT INTO t1 VALUES(10);
+}
+
+do_execsql_test 2.1 {
+  SELECT x1.b FROM x1(random_vector(8), 5), t1 WHERE z=a;
+} {20}
+
+do_execsql_test 2.1 {
+  SELECT x1.b FROM x1(random_vector(8), 5) ORDER BY x1.rowid LIMIT 5
+} {20}
+
+#-------------------------------------------------------------------------
+reset_db
+vec1_load db
+
+do_execsql_test 3.0 {
+  CREATE VIRTUAL TABLE x1 USING vec1(v, a, b);
+  INSERT INTO x1(cmd, arg) VALUES('rebuild', '{index:"flat"}');
+
+  INSERT INTO x1 VALUES(random_vector(8), 10, 20);
+  INSERT INTO x1 VALUES(random_vector(8), 20, 30);
+}
+
+breakpoint
+do_execsql_test 3.1 {
+  INSERT INTO x1 VALUES(random_vector(8), 20_000_000_000, 40);
+} {}
+
+finish_test
+
