@@ -13,6 +13,14 @@ vendor/vec1/*.so
 vendor/vec1/*.o
 vendor/vec1/*.a
 
+# Stress test data + per-run outputs (download via the README; not in source control)
+stress/test-data.json
+stress/test/
+stress/results/
+
+# Local-only backup files
+*.bak
+
 /.config
 /coverage/
 /InstalledFiles

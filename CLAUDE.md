@@ -38,7 +38,7 @@ host (8 GB RAM, unconstrained):
   bin/ingest.rb   → INSERTs all vectors into fraud.db
      │
      ▼
-  bin/train.rb    → vec1_train(...) → INSERT ('rebuild', :model)
+  bin/train.rb    → vec1_train(...) → INSERT (cmd, vector) VALUES ('rebuild', :model)
      │
      ▼
   fraud.db (final, indexed, quantized — committed/artifacted)
@@ -95,8 +95,8 @@ This keeps the final image to: Ruby + libjemalloc + libsqlite3 + the app + the p
 - Labeled dataset (~285MB JSON, vectors + `"legit"`/`"fraud"` label) is preprocessed **once, offline** into `fraud.db`.
 - `fraud.db` schema: `CREATE VIRTUAL TABLE vectors USING vec1(vector, is_fraud);` — `vector` is a raw f32 blob (`array.pack("e*")`), `is_fraud` is `0`/`1`.
 - Both Puma instances open `fraud.db` read-only. OS page cache is shared across processes — the dataset is paid for in RAM **once**, not per instance.
-- **Use ANN with trained IVFADC + product quantization.** This is a *compression* decision, not just a speed one: raw f32 vectors at 14 dims cost 56 bytes/row in the page cache; OPQ at `codesize:8` brings each row down to 8 bytes (~7× smaller). On a ~1–2M row dataset that's the difference between ~100MB and ~15MB of resident memory — only the quantized version fits under the 125MB-per-instance budget.
-- Training is done **once, offline** as part of the ingest pipeline, then `INSERT ... ('rebuild', :model)` installs the trained model into `fraud.db`. The server never trains; it only opens the prebuilt DB and queries.
+- **Use ANN with trained IVFADC + product quantization.** This is a *runtime-RAM compression* decision, not just a speed one. Important nuance: training **does not shrink `fraud.db` on disk** — vec1 keeps the original f32 vectors in a shadow table (`vectors_base`, ~172MB for 3M rows) for rebuild flexibility and integrity checks. What training does shrink is **the hot working set at query time**: kNN queries only touch the PQ index (`vectors_idx`, ~32MB) + bucket metadata (`vectors_meta`, ~3MB) + the trained model (`vectors_model`, ~0.1MB) ≈ 35MB total. The 172MB raw table stays cold on disk; it never enters the page cache during normal serving. Under the 125MB-per-instance budget, only the ~35MB hot path matters. Without training, every query would touch the full ~170MB of raw vectors → wouldn't fit.
+- Training is done **once, offline** as part of the ingest pipeline, then `INSERT ... (cmd, vector) VALUES ('rebuild', :model)` installs the trained model into `fraud.db`. The server never trains; it only opens the prebuilt DB and queries.
 - Query: `SELECT is_fraud FROM vectors(?, '{k:25, nprobe:8}')` with the packed query blob. Tune `k` and `nprobe` against the test set — `nprobe` is the speed/recall knob.
 - Accept that results are approximate. The label vote is robust to a few missed neighbors, and the RAM win is non-negotiable.
 
@@ -104,7 +104,7 @@ This keeps the final image to: Ruby + libjemalloc + libsqlite3 + the app + the p
 
 #### How training actually works
 
-Two things are learned, both by k-means over a sample (~100k vectors is plenty):
+Two things are learned, both by k-means over a sample (~500k vectors for `nbucket:1024` on a 3M-row dataset; see sanity check below):
 
 1. **IVF bucket centroids.** All vectors get clustered into `nbucket` groups. At query time, only the nearest few buckets are scanned (`nprobe`), not the whole dataset.
 2. **Product-quantization codebook.** Each vector is split into sub-vectors; for each sub-vector position vec1 learns a 256-entry dictionary. Stored vectors become sequences of dictionary indices (1 byte each) instead of raw floats. This is where the ~7× compression comes from (56 bytes → 8 bytes for `codesize:8`).
@@ -118,29 +118,42 @@ The on-disk `fraud.db` after training contains, all in one file: the PQ-coded ve
 -- ORDER BY RANDOM() is required — bare LIMIT returns rows in insertion order,
 -- which biases the sample if ingest order had any structure.
 WITH sample(vector) AS (
-  SELECT vector FROM vectors ORDER BY RANDOM() LIMIT 300000
+  SELECT vector FROM vectors ORDER BY RANDOM() LIMIT 500000
 )
 SELECT vec1_train(vector, '{
   distance: "l2",
-  nbucket: 512,
+  nbucket: 1024,
   codesize: 8,
   opq: true
 }') FROM sample;
 
 -- 2. Install: a magic "command insert" the vec1 vtable understands.
-INSERT INTO vectors(cmd, arg) VALUES ('rebuild', :model_blob);
+-- `cmd` is a hidden control column on every vec1 vtable. When set, vec1
+-- treats the INSERT as a command, not a data row. The second column name
+-- doesn't matter (vec1 reads values positionally) — the docs use `arg`,
+-- the tests use `vector`. Both work. Using `vector` keeps to a real
+-- declared column.
+INSERT INTO vectors(cmd, vector) VALUES ('rebuild', :model_blob);
+
+-- Or, more idiomatically, nest the SELECT so the blob never leaves SQLite:
+INSERT INTO vectors(cmd, vector) VALUES ('rebuild', (
+  SELECT vec1_train(vector, '{distance:"l2", nbucket:1024, codesize:8, opq:true}')
+  FROM vectors WHERE rowid IN (
+    SELECT rowid FROM vectors ORDER BY RANDOM() LIMIT 500000
+  )
+));
 ```
 
-**Sample-size sanity check.** FAISS's rule of thumb for training is ~30–100× the number of centroids being fit. At `nbucket:512` and `codesize:8` (which fits 8 PQ codebooks of 256 entries each), the IVF step is the binding constraint: 512 buckets × 30–100 ≈ 15k–50k minimum, with more giving more stable centroids. 300k is comfortable. The PQ side wants ~8k–25k and is over-served. If `nbucket:1024` is used instead, bump the sample to 500k+. The `ORDER BY RANDOM()` adds a few seconds offline — never optimize it away.
+**Sample-size sanity check.** FAISS's rule of thumb for training is ~30–100× the number of centroids being fit. The dataset has 3M rows, so √N ≈ 1732 — `nbucket:1024` is the natural starting point. At `nbucket:1024` and `codesize:8` (which fits 8 PQ codebooks of 256 entries each), the IVF step is the binding constraint: 1024 buckets × 30–100 ≈ 30k–100k minimum sample. 500k gives ~500 vectors per bucket on average — plenty for stable centroids at 14d. The PQ side wants ~8k–25k and is over-served. The `ORDER BY RANDOM()` adds a few seconds offline — never optimize it away.
 
-`vec1_train` is an aggregate function. `('rebuild', :model)` reorganizes the table: raw floats out, PQ codes in, codebook + centroids embedded.
+`vec1_train` is an aggregate function. `(cmd, vector) VALUES ('rebuild', :model)` reorganizes the table: raw floats out, PQ codes in, codebook + centroids embedded.
 
 **Training knobs:**
 
 | Param | Meaning | For this project |
 |---|---|---|
 | `distance` | `"l2"` or `"cos"` | `"l2"` |
-| `nbucket` | number of IVF buckets — rule of thumb is roughly √N | 512–1024 |
+| `nbucket` | number of IVF buckets — rule of thumb is roughly √N | `1024` (3M rows → √N ≈ 1732) |
 | `codesize` | bytes per PQ code per vector — lower is more compression, less accuracy | `8` (7× compression at 14 dims) |
 | `opq` | learn an extra rotation to improve quantization quality | `true` |
 
@@ -205,7 +218,7 @@ Do **not** also set `MALLOC_ARENA_MAX` — that's the glibc knob and has no effe
 
 1. **Decide the feature vector dimension and lock it.** `to_vec` currently returns 7; sample data hints at 14. The vec1 table's dimension is frozen by the first INSERT — re-ingest if it changes.
 2. **Write `bin/ingest.rb`.** `Oj.load` the 285 MB JSON (8 GB host RAM handles the ~2 GB peak fine), pack each vector with `pack("e*")`, batch-insert into `fraud.db` inside transactions of ~50k rows. Set `PRAGMA journal_mode=OFF; synchronous=OFF` for the load only.
-3. **Write `bin/train.rb`.** Run `vec1_train` over a sample (e.g. `LIMIT 100_000`) with `{distance:"l2", nbucket:512–1024, codesize:8, opq:true}`, then `INSERT ... ('rebuild', :model)` to install it. Verify the on-disk DB shrank and queries return sensible neighbors. The output `fraud.db` is the deployment artifact.
+3. **Write `bin/train.rb`.** Run `vec1_train` over a 500k random sample with `{distance:"l2", nbucket:1024, codesize:8, opq:true, nthread:1}`, then `INSERT INTO vectors(cmd, vector) VALUES ('rebuild', :model)` to install it. **`nthread:1` is mandatory** — vec1's multi-threaded PQ encoding has a race that corrupts ~1 row in 3M (caught by `PRAGMA integrity_check` with `PQ does not match calculated PQ for row N`). Single-threaded is ~3× slower (~90s vs ~34s for 3M rows) but produces a valid index. Verify `integrity_check` returns `ok`, run a sanity kNN query, then `VACUUM`. The on-disk file grows (~193 MB → ~228 MB) because the raw vectors are kept; that's expected.
 
 **App (container, runs against the prebuilt DB):**
 
