@@ -9,6 +9,9 @@ SAMPLE_SIZE  = 500_000
 CONFIG = {
   distance: 'l2',
   nbucket:  1024,
+  # codesize is capped at the vector dimension (~14 here). Values above 16
+  # produce the same on-disk index size and the same detection score as 16
+  # — measured: codesize=32 gave identical results to codesize=16.
   codesize: 16,
   opq:      true,
   # nthread: 1 — multi-threaded encoding has a race that corrupts ~1 row in 3M
