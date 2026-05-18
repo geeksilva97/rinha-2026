@@ -9,7 +9,7 @@ SAMPLE_SIZE  = 500_000
 CONFIG = {
   distance: 'l2',
   nbucket:  1024,
-  codesize: 8,
+  codesize: 16,
   opq:      true,
   # nthread: 1 — multi-threaded encoding has a race that corrupts ~1 row in 3M
   # ("integrity_check: PQ does not match calculated PQ for row N"). Single-
