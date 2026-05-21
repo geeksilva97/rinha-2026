@@ -1,11 +1,8 @@
 *.gem
 *.rbc
 
-native/*
-!native/Makefile
-!native/knn.cpp
-!native/vendor/
-!native/vendor/**
+native/bin/*
+native/references.json
 
 # Built vec1 extension binaries (arch-specific; build with the Makefile)
 

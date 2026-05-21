@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>K-Means (Lloyd's algorithm)</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body, {
+    delimiters: [
+      {left: '$$', right: '$$', display: true},
+      {left: '$', right: '$', display: false}
+    ],
+    throwOnError: false
+  });"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: 'Inter', -apple-system, sans-serif;
+  color: #1a1a2e;
+  background: #fff;
+  line-height: 1.7;
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 40px 50px;
+}
+
+@media print {
+  body { padding: 20px 30px; max-width: 100%; }
+  .page-break { page-break-before: always; }
+  .no-break { page-break-inside: avoid; }
+}
+
+h1 {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1a1a2e;
+  border-bottom: 3px solid #3b82f6;
+  padding-bottom: 12px;
+  margin-bottom: 24px;
+}
+
+h2 {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1e40af;
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 8px;
+  margin-top: 32px;
+  margin-bottom: 16px;
+}
+
+h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #374151;
+  margin-top: 20px;
+  margin-bottom: 10px;
+}
+
+p { font-size: 13.5px; margin-bottom: 12px; }
+
+ul, ol {
+  font-size: 13.5px;
+  margin: 12px 0 12px 24px;
+}
+
+li { margin-bottom: 6px; }
+
+strong { color: #1e40af; font-weight: 600; }
+
+code {
+  background: #f1f5f9;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12.5px;
+}
+
+.katex-display {
+  margin: 14px 0 !important;
+  padding: 8px;
+  background: #f8fafc;
+  border-left: 3px solid #3b82f6;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
+.katex { font-size: 1.05em !important; }
+
+.footer {
+  margin-top: 48px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
+  font-size: 11.5px;
+  color: #6b7280;
+  text-align: center;
+}
+</style>
+</head>
+<body>
+
+<h1>K-Means (Lloyd's algorithm)</h1>
+
+<p><strong>Entrada:</strong></p>
+<ul>
+  <li>Dataset $X = \{x_1, x_2, \ldots, x_N\}$, com $x_i \in \mathbb{R}^D$</li>
+  <li>Número de clusters $K$</li>
+  <li>Máximo de iterações $T$</li>
+</ul>
+
+<p><strong>Saída:</strong> Centróides $C = \{c_1, \ldots, c_K\}$ e atribuições $a: \{1,\ldots,N\} \to \{1,\ldots,K\}$</p>
+
+<h2>Passo 1 — Inicialização (Forgy)</h2>
+
+<p>Escolha $K$ índices aleatórios distintos $I = \{i_1, \ldots, i_K\} \subset \{1,\ldots,N\}$.</p>
+
+<p>$$c_j = x_{i_j}, \quad j = 1,\ldots,K$$</p>
+
+<h2>Passo 2 — Para $t = 1, 2, \ldots, T$</h2>
+
+<p><strong>2a) Assignment</strong> — atribui cada ponto ao centróide mais próximo:</p>
+
+<p>$$a(i) = \arg\min_{j \in \{1,\ldots,K\}} \|x_i - c_j\|^2, \quad i = 1,\ldots,N$$</p>
+
+<p>onde</p>
+
+<p>$$\|x_i - c_j\|^2 = \sum_{d=1}^{D}(x_{i,d} - c_{j,d})^2$$</p>
+
+<p><strong>2b) Update</strong> — recalcula cada centróide como média dos pontos atribuídos:</p>
+
+<p>$$S_j = \{i : a(i) = j\}$$</p>
+
+<p>$$c_j = \frac{1}{|S_j|} \sum_{i \in S_j} x_i, \quad \text{se } |S_j| > 0$$</p>
+
+<h2>Passo 3 — Critério de parada</h2>
+
+<p>Para se qualquer um:</p>
+<ul>
+  <li>Nenhuma atribuição mudou: $a^{(t)}(i) = a^{(t-1)}(i),\ \forall i$</li>
+  <li>Movimento dos centróides abaixo do limite: $\sum_{j} \|c_j^{(t)} - c_j^{(t-1)}\| &lt; \varepsilon$</li>
+  <li>$t = T$</li>
+</ul>
+
+<h2>Notas</h2>
+
+<ul>
+  <li>Distância ao quadrado basta — comparar $\|a\|^2 &lt; \|b\|^2$ é equivalente a $\|a\| &lt; \|b\|$ (mais rápido, sem <code>sqrt</code>).</li>
+  <li>Se $|S_j| = 0$ (centróide órfão): mantenha o anterior ou re-inicialize com ponto aleatório.</li>
+  <li>Lloyd converge garantidamente, mas pra um <strong>mínimo local</strong> — não necessariamente global.</li>
+</ul>
+
+<div class="footer">
+  <em>K-Means · Lloyd's algorithm · rinha-fraud-detection/docs</em>
+</div>
+
+</body>
+</html>
