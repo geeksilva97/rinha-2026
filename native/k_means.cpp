@@ -1,9 +1,12 @@
 #include "vendor/json.hpp"
-#include <cstdint>
+#include <bit>
 #include <experimental/simd>
 #include <fstream>
 #include <iostream>
 #include <random>
+
+static_assert(std::endian::native == std::endian::little,
+                "this code assumes little-endian");
 
 using namespace std;
 using json = nlohmann::json;
@@ -78,13 +81,6 @@ int main(int argc, char *argv[]) {
         centroids[j][d] = sum[j][d] / count[j];
       }
     }
-  }
-
-  for (int j = 0; j < K; ++j) {
-    std::cout << "centroide " << j << ": [";
-    for (int d = 0; d < DIM; ++d)
-      std::cout << centroids[j][d] << " ";
-    std::cout << "]\n";
   }
 
   return 0;
