@@ -1,0 +1,42 @@
+services:
+  api1: &api
+    build: .
+    restart: always
+    environment:
+      - SOCK=/run/sock/api1.sock
+    volumes:
+      - sock:/run/sock
+    deploy:
+      resources:
+        limits:
+          cpus: "0.40"
+          memory: "160M"
+
+  api2:
+    <<: *api
+    environment:
+      - SOCK=/run/sock/api2.sock
+
+  lb:
+    image: nginx:1.27-alpine
+    restart: always
+    depends_on:
+      - api1
+      - api2
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - sock:/run/sock
+    ports:
+      - "9999:9999"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    deploy:
+      resources:
+        limits:
+          cpus: "0.20"
+          memory: "30M"
+
+volumes:
+  sock:
