@@ -1,7 +1,7 @@
 *.gem
 *.rbc
 
-native/knn/*
+native/*
 
 # Built vec1 extension binaries (arch-specific; build with the Makefile)
 vendor/vec1/*.dylib
