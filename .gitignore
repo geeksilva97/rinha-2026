@@ -2,12 +2,12 @@
 *.rbc
 
 native/*
+!native/Makefile
+!native/knn.cpp
+!native/vendor/
+!native/vendor/**
 
 # Built vec1 extension binaries (arch-specific; build with the Makefile)
-vendor/vec1/*.dylib
-vendor/vec1/*.so
-vendor/vec1/*.o
-vendor/vec1/*.a
 
 # Stress test data + per-run outputs (download via the README; not in source control)
 stress/test-data.json

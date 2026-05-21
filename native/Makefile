@@ -7,7 +7,10 @@ BIN_DIR = bin
 all: $(BIN_DIR)/knn
 
 $(BIN_DIR)/knn: knn.cpp | $(BIN_DIR) # deps
-	$(CXX) $(CXXFLAGS) -o $@ $^ # command
+	$(CXX) $(CXXFLAGS) -o $@ $< # command
+
+references.json: ../resources/references.json.gz
+	gunzip -k -c $< > $@
 
 $(BIN_DIR):
 	mkdir -p $@
