@@ -6,15 +6,25 @@ name: rinha-fraud-detection
 
 services:
   api1: &api
-    image: ghcr.io/geeksilva97/rinha-2026-api@sha256:63ba5c4facce40e09ac927279e8ca5cf7b7467cd9ab6aa567a07599762bd6e60
+    image: ghcr.io/geeksilva97/rinha-2026-api@sha256:914abadd0b1e86b801d071b699223ae4d68ea00c67f1155f9a31400b90e4345b
     platform: linux/amd64
     restart: always
     environment:
       - SOCK=/run/sock/api1.sock
       - IVF_PATH=/data/ivf.bin
       - NPROBE=70
+      - WARMUP=10
     volumes:
       - sock:/run/sock
+    # Socket only appears after Puma's bind(), which runs AFTER the
+    # synchronous warmup at the top of app.rb finishes. So socket
+    # existence == warmup complete == container ready to serve.
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/sock/api1.sock"]
+      interval: 1s
+      timeout: 1s
+      retries: 120
+      start_period: 5s
     deploy:
       resources:
         limits:
@@ -27,14 +37,21 @@ services:
       - SOCK=/run/sock/api2.sock
       - IVF_PATH=/data/ivf.bin
       - NPROBE=70
+      - WARMUP=10
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/sock/api2.sock"]
+      interval: 1s
+      timeout: 1s
+      retries: 120
+      start_period: 5s
 
   lb:
     image: nginx:1.27-alpine
     platform: linux/amd64
     restart: always
     depends_on:
-      - api1
-      - api2
+      api1: { condition: service_healthy }
+      api2: { condition: service_healthy }
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - sock:/run/sock
