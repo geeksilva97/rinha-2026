@@ -6,13 +6,13 @@ name: rinha-fraud-detection
 
 services:
   api1: &api
-    image: ghcr.io/geeksilva97/rinha-2026-api@sha256:21b3009907f99d03b28f4c042d0fc4d660e130dc6cbaf3c4ac9cd243a0c4407c
+    image: ghcr.io/geeksilva97/rinha-2026-api@sha256:4f705f66ddd49c7bbfc486faf3c02bf6c9b0bc0d3d3e1487c1d25a21b8ae2343
     platform: linux/amd64
     restart: always
     environment:
       - SOCK=/run/sock/api1.sock
       - IVF_PATH=/data/ivf.bin
-      - NPROBE=65
+      - NPROBE=70
     volumes:
       - sock:/run/sock
     deploy:
@@ -26,7 +26,7 @@ services:
     environment:
       - SOCK=/run/sock/api2.sock
       - IVF_PATH=/data/ivf.bin
-      - NPROBE=65
+      - NPROBE=70
 
   lb:
     image: nginx:1.27-alpine
