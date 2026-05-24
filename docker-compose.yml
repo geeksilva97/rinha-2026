@@ -13,7 +13,7 @@ services:
     environment:
       - SOCK=/run/sock/api1.sock
       - IVF_PATH=/data/ivf.bin
-      - NPROBE=${NPROBE:-100}
+      - NPROBE=${NPROBE:-70}
     volumes:
       - sock:/run/sock
       # ivf.bin lives inside the image (COPY+gunzip at build).
@@ -29,7 +29,7 @@ services:
     environment:
       - SOCK=/run/sock/api2.sock
       - IVF_PATH=/data/ivf.bin
-      - NPROBE=${NPROBE:-100}
+      - NPROBE=${NPROBE:-70}
 
   lb:
     image: nginx:1.27-alpine
