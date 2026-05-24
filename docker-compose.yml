@@ -14,7 +14,6 @@ services:
       - SOCK=/run/sock/api1.sock
       - IVF_PATH=/data/ivf.bin
       - NPROBE=${NPROBE:-65}
-      - WEB_CONCURRENCY=${WEB_CONCURRENCY:-2}
     volumes:
       - sock:/run/sock
       # ivf.bin lives inside the image (COPY+gunzip at build).
@@ -31,7 +30,6 @@ services:
       - SOCK=/run/sock/api2.sock
       - IVF_PATH=/data/ivf.bin
       - NPROBE=${NPROBE:-65}
-      - WEB_CONCURRENCY=${WEB_CONCURRENCY:-2}
 
   lb:
     image: nginx:1.27-alpine
