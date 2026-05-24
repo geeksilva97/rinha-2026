@@ -25,6 +25,20 @@ class App
   JSON_HEADERS   = { 'content-type' => 'application/json' }.freeze
   THRESHOLD      = 0.6
 
+  # Pre-computed responses, one per possible fraud_count (0..5).
+  # threshold=0.6, so 0/5, 1/5, 2/5 → approved=true; 3/5, 4/5, 5/5 → false.
+  RESPONSES = [
+    '{"approved":true,"fraud_score":0.0}'.freeze,
+    '{"approved":true,"fraud_score":0.2}'.freeze,
+    '{"approved":true,"fraud_score":0.4}'.freeze,
+    '{"approved":false,"fraud_score":0.6}'.freeze,
+    '{"approved":false,"fraud_score":0.8}'.freeze,
+    '{"approved":false,"fraud_score":1.0}'.freeze,
+  ].freeze
+  # Cache the wrapped rack triplets too, so the hot path returns a frozen
+  # array literal instead of building a fresh one.
+  RESPONSE_TUPLES = RESPONSES.map { |body| [200, JSON_HEADERS, [body]].freeze }.freeze
+
   STAGES = %i[read parse vec score dump total].freeze
   STATS = Hash.new(0)
   STATS_MUTEX = Mutex.new
@@ -50,12 +64,10 @@ class App
   def fraud_score(env)
     return fraud_score_instrumented(env) if INSTRUMENT
 
-    payload = Oj.load(env['rack.input'].read)
-    vec     = Vectorizer.to_vec(payload, @vec_buf)
-    score   = FraudIndex.score(vec)
-    [200, JSON_HEADERS, [Oj.dump({ 'approved' => score < THRESHOLD, 'fraud_score' => score })]]
-  rescue Oj::ParseError
-    BAD_REQUEST
+    # Single C call: parse the body bytes + run kNN + return Integer 0..5.
+    # No Hash, no Float allocation, no Oj.dump on the response — just an
+    # Integer index into a frozen Array of pre-built rack tuples.
+    RESPONSE_TUPLES[FraudIndex.fraud_count_payload(env['rack.input'].read)]
   end
 
   def fraud_score_instrumented(env)
@@ -63,28 +75,20 @@ class App
     t0 = Process.clock_gettime(clk, :nanosecond)
     raw = env['rack.input'].read
     t1 = Process.clock_gettime(clk, :nanosecond)
-    payload = Oj.load(raw)
+    count = FraudIndex.fraud_count_payload(raw)
     t2 = Process.clock_gettime(clk, :nanosecond)
-    vec = Vectorizer.to_vec(payload, @vec_buf)
+    response = RESPONSE_TUPLES[count]
     t3 = Process.clock_gettime(clk, :nanosecond)
-    score = FraudIndex.score(vec)
-    t4 = Process.clock_gettime(clk, :nanosecond)
-    body = Oj.dump({ 'approved' => score < THRESHOLD, 'fraud_score' => score })
-    t5 = Process.clock_gettime(clk, :nanosecond)
 
     STATS_MUTEX.synchronize do
-      STATS[:count]    += 1
-      STATS[:read_ns]  += (t1 - t0)
-      STATS[:parse_ns] += (t2 - t1)
-      STATS[:vec_ns]   += (t3 - t2)
-      STATS[:score_ns] += (t4 - t3)
-      STATS[:dump_ns]  += (t5 - t4)
-      STATS[:total_ns] += (t5 - t0)
+      STATS[:count]            += 1
+      STATS[:read_ns]          += (t1 - t0)
+      STATS[:parse_score_ns]   += (t2 - t1)
+      STATS[:lookup_ns]        += (t3 - t2)
+      STATS[:total_ns]         += (t3 - t0)
     end
 
-    [200, JSON_HEADERS, [body]]
-  rescue Oj::ParseError
-    BAD_REQUEST
+    response
   end
 
   def stats_response
