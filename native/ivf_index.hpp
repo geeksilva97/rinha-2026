@@ -131,17 +131,6 @@ inline bool load_index(const char *path, IvfIndex &idx) {
   idx.labels = reinterpret_cast<const uint8_t *>(
       p + 12 + idx.K * DIM * 4 + (idx.K + 1) * 4 + idx.N * DIM * 4);
 
-  // Warmup: touch every 4KB page so the kernel loads them into the page
-  // cache eagerly. Cuts cold-start tail latency from queries page-faulting.
-  // MADV_WILLNEED hints the kernel to do this async; the touch loop makes
-  // it synchronous so we know it's done before /ready returns 200.
-  madvise(idx.base, idx.size, MADV_WILLNEED);
-  volatile uint8_t sink = 0;
-  for (size_t off = 0; off < idx.size; off += 4096) {
-    sink ^= static_cast<const uint8_t *>(idx.base)[off];
-  }
-  (void)sink;
-
   return true;
 }
 
