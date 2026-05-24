@@ -14,6 +14,23 @@ end
 FraudIndex.nprobe = Integer(ENV.fetch('NPROBE', '1'))
 warn "FraudIndex loaded from #{IVF_PATH} (nprobe=#{FraudIndex.nprobe})"
 
+# Warmup with realistic payloads so the first real requests don't pay for
+# cold page cache, cold branch predictors, or cold method caches. Uses the
+# example-payloads (same statistical distribution as test-data) — the
+# warmup queries hit roughly the same clusters as real queries will.
+# Tunable via WARMUP env (rounds over the example set). 0 disables.
+WARMUP_ROUNDS = Integer(ENV.fetch('WARMUP', '10'))
+warmup_path = File.expand_path('resources/example-payloads.json', __dir__)
+if WARMUP_ROUNDS > 0 && File.exist?(warmup_path)
+  warmup_bodies = Oj.load(File.read(warmup_path)).map { |p| Oj.dump(p) }
+  t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC, :millisecond)
+  WARMUP_ROUNDS.times do
+    warmup_bodies.each { |b| FraudIndex.fraud_count_payload(b) }
+  end
+  elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC, :millisecond) - t0
+  warn "warmup: #{WARMUP_ROUNDS}x#{warmup_bodies.size}=#{WARMUP_ROUNDS * warmup_bodies.size} queries in #{elapsed}ms"
+end
+
 # Per-stage timing instrumentation. Toggle via env INSTRUMENT=1.
 # Adds ~6 calls to Process.clock_gettime per request (~50ns each = ~300ns total).
 INSTRUMENT = ENV['INSTRUMENT'] == '1'
