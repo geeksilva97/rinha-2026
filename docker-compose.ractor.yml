@@ -1,0 +1,70 @@
+name: rinha-fraud-detection
+
+# Alternative submission: Ractor-per-request HTTP server instead of
+# Puma+Rack. Uses the same image, swaps the CMD. See main repo
+# branch (commit 039077b) for the design + local lab results
+# (~+30 score, ~-0.2ms p99 vs Puma single-mode).
+
+services:
+  api1: &api
+    image: ghcr.io/geeksilva97/rinha-2026-api@sha256:d8c39543823f988d228fd393d6008bf32c7b80a9bd33bb266275eb52642d4a17
+    platform: linux/amd64
+    restart: always
+    command: ["bundle", "exec", "ruby", "-W0", "/app/server_ractor.rb"]
+    environment:
+      - SOCK=/run/sock/api1.sock
+      - IVF_PATH=/data/ivf.bin
+      - NPROBE=70
+      - WARMUP=10
+    volumes:
+      - sock:/run/sock
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/sock/api1.sock"]
+      interval: 1s
+      timeout: 1s
+      retries: 120
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.40"
+          memory: "160M"
+
+  api2:
+    <<: *api
+    environment:
+      - SOCK=/run/sock/api2.sock
+      - IVF_PATH=/data/ivf.bin
+      - NPROBE=70
+      - WARMUP=10
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/sock/api2.sock"]
+      interval: 1s
+      timeout: 1s
+      retries: 120
+      start_period: 5s
+
+  lb:
+    image: nginx:1.27-alpine
+    platform: linux/amd64
+    restart: always
+    depends_on:
+      api1: { condition: service_healthy }
+      api2: { condition: service_healthy }
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - sock:/run/sock
+    ports:
+      - "9999:9999"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    deploy:
+      resources:
+        limits:
+          cpus: "0.20"
+          memory: "30M"
+
+volumes:
+  sock:
