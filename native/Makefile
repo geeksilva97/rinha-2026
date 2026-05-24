@@ -6,6 +6,9 @@ BIN_DIR = bin
 # "all" é o alvo default
 all: $(BIN_DIR)/k_means
 
+$(BIN_DIR)/query: query.cpp | $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ $< # command
+
 $(BIN_DIR)/k_means: k_means.cpp | $(BIN_DIR) # deps
 	$(CXX) $(CXXFLAGS) -o $@ $< # command
 
