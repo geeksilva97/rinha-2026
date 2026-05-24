@@ -10,6 +10,10 @@ on:
         description: 'NPROBE value for both API containers'
         required: false
         default: '100'
+      warmup:
+        description: 'WARMUP rounds (0 disables warmup)'
+        required: false
+        default: '10'
 
 jobs:
   rinha-test:
@@ -44,8 +48,9 @@ jobs:
       - name: docker compose up (native amd64, no QEMU)
         env:
           NPROBE: ${{ github.event.inputs.nprobe || '100' }}
+          WARMUP: ${{ github.event.inputs.warmup || '10' }}
         run: |
-          echo "NPROBE=$NPROBE"
+          echo "NPROBE=$NPROBE WARMUP=$WARMUP"
           docker compose up -d --build
           # wait for /ready to return 200
           for i in $(seq 1 30); do
