@@ -22,6 +22,11 @@ stress/test-data.json
 stress/test/
 stress/results/
 
+# Local experiment harness output
+lab/results/
+fast_vectorizer.rb
+bench/fast_vec_bench.rb
+
 # Local-only backup files
 *.bak
 

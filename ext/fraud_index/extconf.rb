@@ -16,4 +16,7 @@ if RbConfig::CONFIG['host_cpu'] =~ /x86_64|amd64/
   $CXXFLAGS << " -march=#{march}"
 end
 
+# Ractor-safe opt-in (Ruby 3.0+). Probe so older Rubies still compile.
+have_func('rb_ext_ractor_safe', 'ruby.h')
+
 create_makefile('fraud_index/fraud_index')

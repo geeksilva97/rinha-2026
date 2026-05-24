@@ -489,14 +489,27 @@ static VALUE rb_fraud_index_set_nprobe(VALUE self, VALUE n) {
 
 void Init_fraud_index(void) {
   VALUE mod = rb_define_module("FraudIndex");
+
+  // Mutating boot/config endpoints — must run from the main Ractor.
+  // Keep them NOT marked as Ractor-safe.
   rb_define_singleton_method(mod, "load",                 RUBY_METHOD_FUNC(rb_fraud_index_load),                  1);
+  rb_define_singleton_method(mod, "nprobe=",              RUBY_METHOD_FUNC(rb_fraud_index_set_nprobe),            1);
+
+  // Hot-path query methods: pure functions over a read-only mmap'd index
+  // (g_index, g_nprobe written once at boot; no Ruby callbacks; no shared
+  // mutable VALUE state). Safe to invoke from any Ractor in parallel.
+#ifdef HAVE_RB_EXT_RACTOR_SAFE
+  rb_ext_ractor_safe(true);
+#endif
   rb_define_singleton_method(mod, "score",                RUBY_METHOD_FUNC(rb_fraud_index_score),                 1);
   rb_define_singleton_method(mod, "fraud_count",          RUBY_METHOD_FUNC(rb_fraud_index_fraud_count),           1);
   rb_define_singleton_method(mod, "fraud_count_payload",  RUBY_METHOD_FUNC(rb_fraud_index_fraud_count_payload),   1);
   rb_define_singleton_method(mod, "parse_payload",        RUBY_METHOD_FUNC(rb_fraud_index_parse_payload),         2);
   rb_define_singleton_method(mod, "loaded?",              RUBY_METHOD_FUNC(rb_fraud_index_loaded),                0);
   rb_define_singleton_method(mod, "nprobe",               RUBY_METHOD_FUNC(rb_fraud_index_get_nprobe),            0);
-  rb_define_singleton_method(mod, "nprobe=",              RUBY_METHOD_FUNC(rb_fraud_index_set_nprobe),            1);
+#ifdef HAVE_RB_EXT_RACTOR_SAFE
+  rb_ext_ractor_safe(false);
+#endif
 }
 
 } // extern "C"
