@@ -50,7 +50,6 @@ int main(int argc, char *argv[]) {
       for (int j = 0; j < K; ++j) {
         float dist = 0;
 
-        // this can probably be simd (?)
         for (int d = 0; d < DIM; ++d) {
           float diff = points[i][d] - centroids[j][d];
           dist += diff * diff;

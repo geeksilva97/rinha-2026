@@ -8,13 +8,13 @@ BIN_DIR = bin
 all: $(BIN_DIR)/k_means
 
 $(BIN_DIR)/query: query.cpp | $(BIN_DIR)
-	$(CXX) $(CXXFLAGS) -o $@ $< # command
+	$(CXX) $(CXXFLAGS) -o $@ $<
 
 $(BIN_DIR)/bench: bench.cpp | $(BIN_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-$(BIN_DIR)/k_means: k_means.cpp | $(BIN_DIR) # deps
-	$(CXX) $(CXXFLAGS) -o $@ $< # command
+$(BIN_DIR)/k_means: k_means.cpp | $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ $<
 
 references.json: ../resources/references.json.gz
 	gunzip -k -c $< > $@
