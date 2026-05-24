@@ -1,14 +1,16 @@
 name: rinha-fraud-detection
 
-# Image is built and published from the main branch via
-# .github/workflows/publish.yml → ghcr.io/geeksilva97/rinha-2026-api
-# Pinned by digest for reproducibility on the rinha evaluator.
+# Alternative submission: Ractor-per-request HTTP server instead of
+# Puma+Rack. Uses the same image, swaps the CMD. See main repo
+# branch (commit 039077b) for the design + local lab results
+# (~+30 score, ~-0.2ms p99 vs Puma single-mode).
 
 services:
   api1: &api
-    image: ghcr.io/geeksilva97/rinha-2026-api@sha256:914abadd0b1e86b801d071b699223ae4d68ea00c67f1155f9a31400b90e4345b
+    image: ghcr.io/geeksilva97/rinha-2026-api@sha256:d8c39543823f988d228fd393d6008bf32c7b80a9bd33bb266275eb52642d4a17
     platform: linux/amd64
     restart: always
+    command: ["bundle", "exec", "ruby", "-W0", "/app/server_ractor.rb"]
     environment:
       - SOCK=/run/sock/api1.sock
       - IVF_PATH=/data/ivf.bin
@@ -16,9 +18,6 @@ services:
       - WARMUP=10
     volumes:
       - sock:/run/sock
-    # Socket only appears after Puma's bind(), which runs AFTER the
-    # synchronous warmup at the top of app.rb finishes. So socket
-    # existence == warmup complete == container ready to serve.
     healthcheck:
       test: ["CMD-SHELL", "test -S /run/sock/api1.sock"]
       interval: 1s
