@@ -1,0 +1,7 @@
+{
+  "participants": ["Edy Silva"],
+  "social": ["https://github.com/geeksilva97"],
+  "source-code-repo": "https://github.com/geeksilva97/rinha-2026",
+  "stack": ["ruby", "puma", "rack", "nginx", "c++", "ivf", "simd"],
+  "open_to_work": false
+}
