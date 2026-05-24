@@ -14,24 +14,6 @@ end
 FraudIndex.nprobe = Integer(ENV.fetch('NPROBE', '1'))
 warn "FraudIndex loaded from #{IVF_PATH} (nprobe=#{FraudIndex.nprobe})"
 
-# Warmup with dummy queries so the first real requests don't pay for:
-#  - cold page cache (only loads pages real queries touch — no cgroup pressure)
-#  - cold branch predictor in the SIMD distance loops
-#  - cold Ruby method caches / first-time C-extension entry paths
-# Tunable via WARMUP=0 to disable, or WARMUP=N to set iterations.
-WARMUP_ITERS = Integer(ENV.fetch('WARMUP', '500'))
-if WARMUP_ITERS > 0
-  rng = Random.new(42)
-  buf = Array.new(14, 0.0)
-  t_start = Process.clock_gettime(Process::CLOCK_MONOTONIC, :millisecond)
-  WARMUP_ITERS.times do
-    14.times { |i| buf[i] = rng.rand(-1.0..1.0) }
-    FraudIndex.score(buf)
-  end
-  elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC, :millisecond) - t_start
-  warn "warmup: #{WARMUP_ITERS} queries in #{elapsed}ms"
-end
-
 # Per-stage timing instrumentation. Toggle via env INSTRUMENT=1.
 # Adds ~6 calls to Process.clock_gettime per request (~50ns each = ~300ns total).
 INSTRUMENT = ENV['INSTRUMENT'] == '1'
