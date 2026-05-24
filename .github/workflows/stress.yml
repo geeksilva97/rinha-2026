@@ -51,13 +51,12 @@ jobs:
           WARMUP: ${{ github.event.inputs.warmup || '10' }}
         run: |
           echo "NPROBE=$NPROBE WARMUP=$WARMUP"
-          docker compose up -d --build
-          # wait for /ready to return 200
-          for i in $(seq 1 30); do
-            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9999/ready || true)
-            if [ "$code" = "200" ]; then break; fi
-            sleep 1
-          done
+          # --wait blocks until lb starts, which (via depends_on:
+          # service_healthy) only happens after BOTH api containers'
+          # /run/sock/apiN.sock exists. Socket creation is gated on
+          # warmup completion (synchronous at app.rb top-level), so
+          # this is the canonical "warmup done in both" barrier.
+          docker compose up -d --build --wait --wait-timeout 180
           curl -s -o /dev/null -w 'ready=%{http_code}\n' http://localhost:9999/ready
 
       - name: rinha test (k6, 120s ramping to 900 RPS)
