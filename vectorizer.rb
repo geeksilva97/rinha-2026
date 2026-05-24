@@ -1,7 +1,7 @@
 require 'oj'
 
-# Converte payload da rinha em vetor 14-dim normalizado.
-# Schema documentado em docs.rinha REGRAS_DE_DETECCAO.md.
+# Converts a rinha payload into a normalized 14-dim vector.
+# Schema documented in docs.rinha REGRAS_DE_DETECCAO.md.
 module Vectorizer
   RESOURCES = File.expand_path('resources', __dir__)
 
@@ -16,11 +16,11 @@ module Vectorizer
   MAX_TX_COUNT_24H        = _norm.fetch('max_tx_count_24h').to_f
   MAX_MERCHANT_AVG_AMOUNT = _norm.fetch('max_merchant_avg_amount').to_f
 
-  # Sakamoto: tabela de offset por mês (jan..dez). 0=Domingo,...,6=Sábado.
+  # Sakamoto: per-month offset table (Jan..Dec). 0=Sunday,...,6=Saturday.
   DOW_TABLE = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4].freeze
 
-  # Parseia ISO "2026-03-11T18:45:53Z" via byte arithmetic. Zero alocação.
-  # Retorna [year, month, day, hour, minute, second].
+  # Parses ISO "2026-03-11T18:45:53Z" via byte arithmetic. Zero allocations.
+  # Returns [year, month, day, hour, minute, second].
   def self.parse_iso(s)
     [
       (s.getbyte(0) - 48) * 1000 + (s.getbyte(1) - 48) * 100 + (s.getbyte(2) - 48) * 10 + (s.getbyte(3) - 48),
@@ -32,8 +32,8 @@ module Vectorizer
     ]
   end
 
-  # Converte payload em vetor 14-dim normalizado.
-  # Aceita `out` opcional pra reuso de buffer (thread-local).
+  # Converts a payload into a normalized 14-dim vector.
+  # Accepts optional `out` buffer for reuse (thread-local).
   def self.to_vec(payload, out = Array.new(14, 0.0))
     tx       = payload['transaction']
     customer = payload['customer']
@@ -47,7 +47,7 @@ module Vectorizer
     day    = (iso.getbyte(8) - 48) * 10 + (iso.getbyte(9) - 48)
     hour   = (iso.getbyte(11) - 48) * 10 + (iso.getbyte(12) - 48)
 
-    # Sakamoto: 0=Dom..6=Sáb. Spec quer 0=Seg..6=Dom → desloca em -1 mod 7.
+    # Sakamoto: 0=Sun..6=Sat. Spec wants 0=Mon..6=Sun → shift by -1 mod 7.
     y_adj   = month < 3 ? year - 1 : year
     sak_dow = (y_adj + y_adj / 4 - y_adj / 100 + y_adj / 400 + DOW_TABLE[month - 1] + day) % 7
     dow     = (sak_dow + 6) % 7
@@ -90,7 +90,7 @@ module Vectorizer
       cmi = (iso.getbyte(14) - 48) * 10 + (iso.getbyte(15) - 48)
       cse = (iso.getbyte(17) - 48) * 10 + (iso.getbyte(18) - 48)
 
-      # Delta em minutos via Time.utc.to_i (2 alocações; lida com mês/ano)
+      # Delta in minutes via Time.utc.to_i (2 allocations; handles month/year boundary)
       delta_min = (Time.utc(year, month, day, hour, cmi, cse).to_i -
                    Time.utc(lyr, lmo, lda, lhr, lmi, lse).to_i) / 60.0
 

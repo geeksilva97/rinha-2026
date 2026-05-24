@@ -1,13 +1,13 @@
-// Ruby C++ extension: expõe FraudIndex.load(path) e FraudIndex.score(vec14).
+// Ruby C++ extension: exposes FraudIndex.load(path) and FraudIndex.score(vec14).
 
 #include "ivf_index.hpp"
 #include <ruby.h>
 
 using namespace ivf;
 
-// Singleton: o index é carregado uma vez na boot da API e fica vivo até o
-// processo morrer. Em produção a API tem um único worker Puma, então sem
-// concorrência. Se mudar pra cluster mode, repensar.
+// Singleton: the index is loaded once at API boot and lives until the
+// process exits. In prod the API runs a single Puma worker, so no
+// concurrency. Revisit if we move to cluster mode.
 static IvfIndex g_index;
 static bool     g_loaded  = false;
 static int      g_nprobe  = 1;
@@ -31,16 +31,16 @@ static VALUE rb_fraud_index_load(VALUE self, VALUE path) {
   return Qfalse;
 }
 
-// FraudIndex.score(query_array_de_14_floats) → Float (fraud_score)
+// FraudIndex.score(query_array_of_14_floats) → Float (fraud_score)
 static VALUE rb_fraud_index_score(VALUE self, VALUE arr) {
   (void)self;
   Check_Type(arr, T_ARRAY);
 
   if (!g_loaded) {
-    rb_raise(rb_eRuntimeError, "FraudIndex: índice não carregado (chame .load primeiro)");
+    rb_raise(rb_eRuntimeError, "FraudIndex: index not loaded (call .load first)");
   }
   if (RARRAY_LEN(arr) != static_cast<long>(DIM)) {
-    rb_raise(rb_eArgError, "FraudIndex.score: query precisa ter %u elementos, recebeu %ld",
+    rb_raise(rb_eArgError, "FraudIndex.score: query needs %u elements, got %ld",
              DIM, RARRAY_LEN(arr));
   }
 

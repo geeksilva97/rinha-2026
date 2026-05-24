@@ -6,7 +6,7 @@ require_relative 'vectorizer'
 
 Oj.default_options = { mode: :strict, symbol_keys: false }
 
-# Carrega o índice IVF no boot. Path via env (Docker mountará /data/ivf.bin).
+# Load the IVF index at boot. Path via env (Docker mounts /data/ivf.bin).
 IVF_PATH = ENV.fetch('IVF_PATH', File.expand_path('native/ivf.bin', __dir__))
 unless FraudIndex.load(IVF_PATH)
   raise "FraudIndex.load failed for #{IVF_PATH}"
@@ -22,8 +22,8 @@ class App
   THRESHOLD      = 0.6
 
   def initialize
-    # Buffer reutilizado pelo Vectorizer pra evitar alocar Array(14) por request.
-    # Puma com workers=1, threads=1 → single-threaded por processo, safe reusar.
+    # Buffer reused by Vectorizer to avoid allocating Array(14) per request.
+    # Puma with workers=1, threads=1 → single-threaded per process, safe to reuse.
     @vec_buf = Array.new(14, 0.0)
   end
 

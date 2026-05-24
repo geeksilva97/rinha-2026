@@ -1,7 +1,7 @@
-// Bench: SIMD vs escalar na distância L2² (mesma query, mesmo IVF).
+// Bench: SIMD vs scalar L2² distance (same query, same IVF).
 //
-// Mede só o caminho quente: centroid search + top-5 dentro do cluster.
-// Roda N iterações por versão pra amortizar ruído.
+// Measures only the hot path: centroid search + top-5 within the cluster.
+// Runs N iterations per variant to smooth out noise.
 
 #include <cerrno>
 #include <chrono>
@@ -59,7 +59,7 @@ static inline float dist_sq_simd(const float *a, const float *b) {
   return result;
 }
 
-// ─── busca completa: centroid + top-5 ────────────────────────────────
+// ─── full search: centroid + top-5 ────────────────────────────────────
 template <auto DIST>
 __attribute__((noinline))
 float run_query(const float *centroids, const uint32_t *offsets,
@@ -116,7 +116,7 @@ int main() {
 
   cout << "K=" << K << "  N=" << N << "  DIM=" << DIM
        << "  SIMD width=" << stdx::native_simd<float>::size() << endl;
-  cout << "iterações por versão: " << ITERS << endl << endl;
+  cout << "iterations per variant: " << ITERS << endl << endl;
 
   // Aquece o page cache (mmap lazy) com 100 chamadas
   for (int i = 0; i < 100; ++i) run_query<dist_sq_simd>(cent, offs, vecs, labs, K);
@@ -146,7 +146,7 @@ int main() {
        << (double)dt_simd   / ITERS << " µs/query)" << endl;
   cout << "speedup: " << (double)dt_scalar / dt_simd << "x" << endl;
 
-  // garante que o compilador não otimize fora
+  // keep sinks alive so the compiler doesn't optimize the loops away
   (void)sink_s; (void)sink_v;
   return 0;
 }

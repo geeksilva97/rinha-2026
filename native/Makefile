@@ -1,5 +1,5 @@
-# Default to g++-15 (brew, macOS dev) só se Make estiver usando seu builtin.
-# Env/command-line ainda overrideiam (CI passa CXX=g++ via env).
+# Default to g++-15 (brew, macOS dev) only when Make is using its builtin.
+# Env/command-line still override (CI passes CXX=g++ via env).
 ifeq ($(origin CXX), default)
 override CXX := g++-15
 endif
@@ -9,7 +9,7 @@ CXXFLAGS = -O2 -Wall -std=c++26 $(if $(SDK_PATH),-isysroot $(SDK_PATH)) -I_compa
 
 BIN_DIR = bin
 
-# "all" é o alvo default
+# "all" is the default target
 all: $(BIN_DIR)/k_means
 
 $(BIN_DIR)/query: query.cpp | $(BIN_DIR)
@@ -18,7 +18,7 @@ $(BIN_DIR)/query: query.cpp | $(BIN_DIR)
 $(BIN_DIR)/bench: bench.cpp | $(BIN_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-# k_means roda offline na máquina que compilou — pode usar -march=native
+# k_means runs offline on the build machine — safe to use -march=native
 $(BIN_DIR)/k_means: CXXFLAGS += -march=native
 $(BIN_DIR)/k_means: k_means.cpp ivf_index.hpp | $(BIN_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ $<
@@ -35,10 +35,10 @@ clean:
 .PHONY: all clean
 
  # ┌─────┬────────────────────────┐
- #  │     │      significado       │
+ #  │     │      meaning           │
  #  ├─────┼────────────────────────┤
- #  │ $@  │ o alvo da regra        │
+ #  │ $@  │ the rule's target      │
  #  ├─────┼────────────────────────┤
- #  │ $<  │ a primeira dependência │
+ #  │ $<  │ the first prerequisite │
  #  ├─────┼────────────────────────┤
- #  │ $^  │ todas as dependências  │
+ #  │ $^  │ all prerequisites      │

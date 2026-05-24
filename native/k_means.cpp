@@ -1,4 +1,4 @@
-#include "ivf_index.hpp"  // ivf::dist_sq (SIMD onde disponível)
+#include "ivf_index.hpp"  // ivf::dist_sq (SIMD when available)
 #include "vendor/json.hpp"
 #include <bit>
 #include <chrono>
@@ -52,7 +52,7 @@ int main(int argc, char *argv[]) {
   for (uint32_t t = 0; t < T; ++t) {
     auto iter_start = clock::now();
 
-    // ASSIGN (hot loop: N × K × D ops, dist_sq usa SIMD quando disponível)
+    // ASSIGN (hot loop: N × K × D ops; dist_sq uses SIMD when available)
     for (size_t i = 0; i < data.size(); ++i) {
       float best_dist = std::numeric_limits<float>::max();
       int best_j = 0;
@@ -81,7 +81,7 @@ int main(int argc, char *argv[]) {
     }
 
     for (uint32_t j = 0; j < K; ++j) {
-      if (count[j] == 0) continue; // centróide órfão
+      if (count[j] == 0) continue; // orphan centroid
       for (uint32_t d = 0; d < DIM; ++d) {
         centroids[j][d] = sum[j][d] / count[j];
       }
@@ -126,7 +126,7 @@ int main(int argc, char *argv[]) {
   out.write(reinterpret_cast<const char *>(offsets.data()),
             offsets.size() * sizeof(uint32_t));
 
-  // VECTORS ordenados por cluster (via cursor)
+  // VECTORS sorted by cluster (using cursor array)
   auto cursor = offsets;
   std::vector<float> ordered_vectors(N * DIM);
   std::vector<uint8_t> ordered_labels(N);

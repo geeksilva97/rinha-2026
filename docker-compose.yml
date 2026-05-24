@@ -9,8 +9,8 @@ services:
       - NPROBE=${NPROBE:-100}
     volumes:
       - sock:/run/sock
-      # Mesma cópia do ivf.bin em ambos containers → mesmo inode no host
-      # → kernel compartilha as páginas do page cache (RAM única pra 2 procs).
+      # Same ivf.bin in both containers → same inode on the host
+      # → kernel shares page cache pages (single RAM region for both procs).
       - ./native/ivf.bin:/data/ivf.bin:ro
     deploy:
       resources:

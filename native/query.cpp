@@ -1,5 +1,5 @@
-// Driver standalone do IVF: carrega ivf.bin, calcula score pra uma query
-// hardcoded, imprime os top-5 e o veredito.
+// Standalone IVF driver: loads ivf.bin, computes the score for a hardcoded
+// query, and prints the top-5 plus the verdict.
 
 #include "ivf_index.hpp"
 #include <iostream>

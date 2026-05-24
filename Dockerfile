@@ -19,12 +19,12 @@ RUN bundle install --jobs 4
 # Header do IVF index (compartilhado entre native/ standalone e a extension)
 COPY native/ivf_index.hpp ./native/ivf_index.hpp
 
-# Compila a C++ extension dentro do build (será incluída na imagem)
+# Build the C++ extension during image build (shipped in the image)
 COPY ext ./ext
 RUN cd ext/fraud_index \
     && ruby extconf.rb \
     && make -j$(nproc) \
-    && rm -f *.o   # remove só intermediates, mantém o .so
+    && rm -f *.o   # drop only intermediates, keep the .so
 
 COPY resources ./resources
 COPY app.rb config.ru vectorizer.rb ./

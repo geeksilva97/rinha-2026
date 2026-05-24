@@ -1,12 +1,12 @@
-// IVF index: carrega o ivf.bin via mmap e responde queries kNN (k=5).
+// IVF index: loads ivf.bin via mmap and answers kNN queries (k=5).
 //
-// Uso típico:
+// Typical use:
 //     IvfIndex idx;
 //     if (!load_index("ivf.bin", idx)) { ... }
 //     float score = ivf_score(idx, query_14_floats);
 //     unload_index(idx);
 //
-// O score retornado é num_frauds / 5.0f. O caller decide o threshold.
+// The returned score is num_frauds / 5.0f. Caller decides the threshold.
 
 #pragma once
 
@@ -19,8 +19,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-// std::experimental::simd só está implementado em libstdc++ (GCC).
-// Clang/libc++ tem o header mas faltam pedaços (ex: reduce). Restringe a GCC.
+// std::experimental::simd is only implemented in libstdc++ (GCC).
+// Clang/libc++ ships the header but it's missing bits (e.g. reduce). Restrict to GCC.
 #if defined(__GNUC__) && !defined(__clang__) && __has_include(<experimental/simd>)
 #  include <experimental/simd>
 #  define IVF_HAS_SIMD 1
@@ -38,7 +38,7 @@ constexpr uint32_t DIM   = 14;
 constexpr int      TOP_K = 5;
 
 struct IvfIndex {
-  // mmap bookkeeping (pra unload depois)
+  // mmap bookkeeping (for later unload)
   void *base   = nullptr;
   size_t size  = 0;
   int    fd    = -1;
@@ -48,14 +48,14 @@ struct IvfIndex {
   uint32_t D = 0;
   uint32_t N = 0;
 
-  // ponteiros pras seções dentro do mmap
+  // pointers into each section of the mmap region
   const float    *centroids = nullptr;
   const uint32_t *offsets   = nullptr;
   const float    *vectors   = nullptr;
   const uint8_t  *labels    = nullptr;
 };
 
-// Distância L2² entre dois vetores DIM-dim.
+// Squared L2 distance between two DIM-dim vectors.
 static inline float dist_sq(const float *a, const float *b) {
 #if IVF_HAS_SIMD
   using simd_f       = stdx::native_simd<float>;
@@ -86,8 +86,8 @@ static inline float dist_sq(const float *a, const float *b) {
 #endif
 }
 
-// Abre + mmap + valida o header. Retorna true em sucesso.
-// Em falha, idx fica em estado inválido (não chamar unload).
+// Opens, mmaps, and validates the header. Returns true on success.
+// On failure, idx is left in an invalid state (do not call unload).
 inline bool load_index(const char *path, IvfIndex &idx) {
   idx.fd = open(path, O_RDONLY);
   if (idx.fd == -1) {
@@ -108,7 +108,7 @@ inline bool load_index(const char *path, IvfIndex &idx) {
     return false;
   }
 
-  // Hint pro kernel: padrão de acesso é random (não sequencial)
+  // Hint to the kernel: access pattern is random (not sequential)
   madvise(idx.base, idx.size, MADV_RANDOM);
 
   const char     *p   = static_cast<const char *>(idx.base);
@@ -118,7 +118,7 @@ inline bool load_index(const char *path, IvfIndex &idx) {
   idx.N = hdr[2];
 
   if (idx.D != DIM) {
-    std::cerr << "header DIM=" << idx.D << ", esperado " << DIM << std::endl;
+    std::cerr << "header DIM=" << idx.D << ", expected " << DIM << std::endl;
     munmap(idx.base, idx.size);
     close(idx.fd);
     return false;
@@ -140,7 +140,7 @@ inline void unload_index(IvfIndex &idx) {
   idx = {};
 }
 
-// Acha o centróide mais próximo do query (brute force entre os K centróides).
+// Finds the nearest centroid to the query (brute force across the K centroids).
 inline uint32_t nearest_centroid(const IvfIndex &idx, const float *query) {
   float    best = std::numeric_limits<float>::max();
   uint32_t best_c = 0;
@@ -151,8 +151,8 @@ inline uint32_t nearest_centroid(const IvfIndex &idx, const float *query) {
   return best_c;
 }
 
-// Top-N centróides mais próximos. out_clusters[] precisa ter capacidade N.
-// Resultado ordenado crescente por distância. Insertion sort sobre N.
+// Top-N nearest centroids. out_clusters[] must have capacity N.
+// Result is sorted ascending by distance. Insertion sort over N.
 inline void top_n_centroids(const IvfIndex &idx, const float *query,
                             int nprobe, uint32_t *out_clusters) {
   float *top_d = static_cast<float *>(alloca(nprobe * sizeof(float)));
@@ -176,8 +176,8 @@ inline void top_n_centroids(const IvfIndex &idx, const float *query,
   }
 }
 
-// Top-K global atualizado em uma passada por um cluster. Mantém o estado
-// (top_d, out_idx) entre chamadas pra varrer múltiplos clusters.
+// Updates the global top-K in a single pass over one cluster. Caller keeps
+// the state (top_d, out_idx) across calls to scan multiple clusters.
 inline void merge_top5_from_cluster(const IvfIndex &idx, const float *query,
                                     uint32_t cluster,
                                     float top_d[TOP_K],
@@ -200,10 +200,10 @@ inline void merge_top5_from_cluster(const IvfIndex &idx, const float *query,
   }
 }
 
-// Score completo: encontra os nprobe centróides mais próximos, top-5 global
-// entre todos os vetores deles, conta fraudes / 5.
+// End-to-end score: finds the nprobe nearest centroids, global top-5 across
+// all of their vectors, returns fraud count / 5.
 inline float ivf_score(const IvfIndex &idx, const float *query, int nprobe = 1) {
-  // Estado do top-5 global, persistente entre clusters
+  // Global top-5 state, persistent across clusters
   float    top_d[TOP_K];
   uint32_t top_i[TOP_K];
   for (int k = 0; k < TOP_K; ++k) {
