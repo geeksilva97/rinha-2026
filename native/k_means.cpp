@@ -1,6 +1,7 @@
+#include "ivf_index.hpp"  // ivf::dist_sq (SIMD onde disponível)
 #include "vendor/json.hpp"
 #include <bit>
-#include <experimental/simd>
+#include <chrono>
 #include <fstream>
 #include <iostream>
 #include <random>
@@ -10,6 +11,7 @@ static_assert(std::endian::native == std::endian::little,
 
 using namespace std;
 using json = nlohmann::json;
+using ivf::dist_sq;
 
 std::mt19937 rng(42); // seed
 
@@ -41,20 +43,23 @@ int main(int argc, char *argv[]) {
   std::vector<std::vector<float>> sum(K, std::vector<float>(DIM, 0.0f));
   std::vector<int> count(K, 0);
 
-  for (int t = 0; t < T; ++t) {
-    // ASSIGN
-    for (int i = 0; i < data.size(); ++i) {
+  using clock = std::chrono::steady_clock;
+  auto t_start = clock::now();
+
+  cout << "training k-means: K=" << K << " T=" << T << " DIM=" << DIM
+       << " N=" << data.size() << "\n";
+
+  for (uint32_t t = 0; t < T; ++t) {
+    auto iter_start = clock::now();
+
+    // ASSIGN (hot loop: N × K × D ops, dist_sq usa SIMD quando disponível)
+    for (size_t i = 0; i < data.size(); ++i) {
       float best_dist = std::numeric_limits<float>::max();
       int best_j = 0;
+      const float *xi = points[i].data();
 
-      for (int j = 0; j < K; ++j) {
-        float dist = 0;
-
-        for (int d = 0; d < DIM; ++d) {
-          float diff = points[i][d] - centroids[j][d];
-          dist += diff * diff;
-        }
-
+      for (uint32_t j = 0; j < K; ++j) {
+        float dist = dist_sq(xi, centroids[j].data());
         if (dist < best_dist) {
           best_dist = dist;
           best_j = j;
@@ -68,21 +73,27 @@ int main(int argc, char *argv[]) {
     std::fill(count.begin(), count.end(), 0);
     for (auto &s : sum)
       std::fill(s.begin(), s.end(), 0.0f);
-    for (int i = 0; i < data.size(); ++i) {
-      int c = assignments[i]; // cluster k
-      for (int d = 0; d < DIM; ++d)
+    for (size_t i = 0; i < data.size(); ++i) {
+      int c = assignments[i];
+      for (uint32_t d = 0; d < DIM; ++d)
         sum[c][d] += points[i][d];
       count[c]++;
     }
 
-    for (int j = 0; j < K; ++j) {
-      if (count[j] == 0)
-        continue; // orphan centroid
-      for (int d = 0; d < DIM; ++d) {
-        // updating centroid
+    for (uint32_t j = 0; j < K; ++j) {
+      if (count[j] == 0) continue; // centróide órfão
+      for (uint32_t d = 0; d < DIM; ++d) {
         centroids[j][d] = sum[j][d] / count[j];
       }
     }
+
+    auto iter_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        clock::now() - iter_start).count();
+    auto total_s = std::chrono::duration_cast<std::chrono::seconds>(
+        clock::now() - t_start).count();
+    cout << "  iter " << (t + 1) << "/" << T
+         << "  took=" << iter_ms << "ms"
+         << "  total=" << total_s << "s\n" << std::flush;
   }
 
   // save file
