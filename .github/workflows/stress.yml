@@ -14,10 +14,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: install build deps
+      - name: install build deps (g++-14 pra c++26)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends g++ gzip
+          sudo apt-get install -y --no-install-recommends g++-14 gzip
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 140
+          g++ --version | head -1
 
       - name: cpu info (sanity — esperamos AVX2)
         run: |
