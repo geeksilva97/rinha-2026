@@ -5,6 +5,7 @@ services:
     environment:
       - SOCK=/run/sock/api1.sock
       - IVF_PATH=/data/ivf.bin
+      - NPROBE=${NPROBE:-50}
     volumes:
       - sock:/run/sock
       # Mesma cópia do ivf.bin em ambos containers → mesmo inode no host
@@ -21,6 +22,7 @@ services:
     environment:
       - SOCK=/run/sock/api2.sock
       - IVF_PATH=/data/ivf.bin
+      - NPROBE=${NPROBE:-50}
 
   lb:
     image: nginx:1.27-alpine

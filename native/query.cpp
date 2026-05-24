@@ -20,25 +20,12 @@ int main(void) {
 
   cout << "K=" << idx.K << "  D=" << idx.D << "  N=" << idx.N << endl;
 
-  uint32_t c = nearest_centroid(idx, QUERY);
-  cout << "best_centroid: " << c << endl;
-
-  uint32_t top[TOP_K];
-  top5_in_cluster(idx, QUERY, c, top);
-
-  cout << "top-5:\n";
-  int frauds = 0;
-  for (int k = 0; k < TOP_K; ++k) {
-    uint8_t lbl = idx.labels[top[k]];
-    frauds += lbl;
-    cout << "  idx=" << top[k]
-         << "  label=" << (lbl ? "fraud" : "legit") << "\n";
-  }
-
-  float fraud_score = frauds / static_cast<float>(TOP_K);
+  int nprobe = 1;
+  float fraud_score = ivf_score(idx, QUERY, nprobe);
   bool  approved    = fraud_score < 0.6f;
 
-  cout << "fraud_score: " << fraud_score
+  cout << "nprobe=" << nprobe
+       << "  fraud_score: " << fraud_score
        << "  approved: " << (approved ? "true" : "false") << endl;
 
   unload_index(idx);

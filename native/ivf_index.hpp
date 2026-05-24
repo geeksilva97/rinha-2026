@@ -151,18 +151,39 @@ inline uint32_t nearest_centroid(const IvfIndex &idx, const float *query) {
   return best_c;
 }
 
-// Top-5 vizinhos dentro de um cluster. Resultado vai em out_idx (índices
-// globais dos vetores). Insertion sort em buffer de 5.
-inline void top5_in_cluster(const IvfIndex &idx, const float *query,
-                            uint32_t cluster, uint32_t out_idx[TOP_K]) {
+// Top-N centróides mais próximos. out_clusters[] precisa ter capacidade N.
+// Resultado ordenado crescente por distância. Insertion sort sobre N.
+inline void top_n_centroids(const IvfIndex &idx, const float *query,
+                            int nprobe, uint32_t *out_clusters) {
+  float *top_d = static_cast<float *>(alloca(nprobe * sizeof(float)));
+  for (int k = 0; k < nprobe; ++k) {
+    top_d[k]        = std::numeric_limits<float>::max();
+    out_clusters[k] = 0;
+  }
+
+  for (uint32_t i = 0; i < idx.K; ++i) {
+    float d = dist_sq(query, idx.centroids + i * DIM);
+    if (d >= top_d[nprobe - 1]) continue;
+
+    int p = nprobe - 1;
+    while (p > 0 && top_d[p - 1] > d) {
+      top_d[p]        = top_d[p - 1];
+      out_clusters[p] = out_clusters[p - 1];
+      --p;
+    }
+    top_d[p]        = d;
+    out_clusters[p] = i;
+  }
+}
+
+// Top-K global atualizado em uma passada por um cluster. Mantém o estado
+// (top_d, out_idx) entre chamadas pra varrer múltiplos clusters.
+inline void merge_top5_from_cluster(const IvfIndex &idx, const float *query,
+                                    uint32_t cluster,
+                                    float top_d[TOP_K],
+                                    uint32_t out_idx[TOP_K]) {
   uint32_t begin = idx.offsets[cluster];
   uint32_t end   = idx.offsets[cluster + 1];
-
-  float top_d[TOP_K];
-  for (int k = 0; k < TOP_K; ++k) {
-    top_d[k] = std::numeric_limits<float>::max();
-    out_idx[k] = 0;
-  }
 
   for (uint32_t i = begin; i < end; ++i) {
     float d = dist_sq(query, idx.vectors + i * DIM);
@@ -179,16 +200,30 @@ inline void top5_in_cluster(const IvfIndex &idx, const float *query,
   }
 }
 
-// Score completo: encontra cluster mais próximo, top-5 lá dentro, conta
-// fraudes / 5.
-inline float ivf_score(const IvfIndex &idx, const float *query) {
-  uint32_t c = nearest_centroid(idx, query);
+// Score completo: encontra os nprobe centróides mais próximos, top-5 global
+// entre todos os vetores deles, conta fraudes / 5.
+inline float ivf_score(const IvfIndex &idx, const float *query, int nprobe = 1) {
+  // Estado do top-5 global, persistente entre clusters
+  float    top_d[TOP_K];
+  uint32_t top_i[TOP_K];
+  for (int k = 0; k < TOP_K; ++k) {
+    top_d[k] = std::numeric_limits<float>::max();
+    top_i[k] = 0;
+  }
 
-  uint32_t top[TOP_K];
-  top5_in_cluster(idx, query, c, top);
+  if (nprobe <= 1) {
+    uint32_t c = nearest_centroid(idx, query);
+    merge_top5_from_cluster(idx, query, c, top_d, top_i);
+  } else {
+    uint32_t *clusters = static_cast<uint32_t *>(alloca(nprobe * sizeof(uint32_t)));
+    top_n_centroids(idx, query, nprobe, clusters);
+    for (int n = 0; n < nprobe; ++n) {
+      merge_top5_from_cluster(idx, query, clusters[n], top_d, top_i);
+    }
+  }
 
   int frauds = 0;
-  for (int k = 0; k < TOP_K; ++k) frauds += idx.labels[top[k]];
+  for (int k = 0; k < TOP_K; ++k) frauds += idx.labels[top_i[k]];
   return frauds / static_cast<float>(TOP_K);
 }
 

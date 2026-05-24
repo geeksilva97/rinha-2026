@@ -9,7 +9,8 @@ using namespace ivf;
 // processo morrer. Em produção a API tem um único worker Puma, então sem
 // concorrência. Se mudar pra cluster mode, repensar.
 static IvfIndex g_index;
-static bool     g_loaded = false;
+static bool     g_loaded  = false;
+static int      g_nprobe  = 1;
 
 extern "C" {
 
@@ -48,7 +49,7 @@ static VALUE rb_fraud_index_score(VALUE self, VALUE arr) {
     query[i] = static_cast<float>(NUM2DBL(rb_ary_entry(arr, i)));
   }
 
-  float score = ivf_score(g_index, query);
+  float score = ivf_score(g_index, query, g_nprobe);
   return DBL2NUM(score);
 }
 
@@ -58,11 +59,28 @@ static VALUE rb_fraud_index_loaded(VALUE self) {
   return g_loaded ? Qtrue : Qfalse;
 }
 
+// FraudIndex.nprobe → Integer
+static VALUE rb_fraud_index_get_nprobe(VALUE self) {
+  (void)self;
+  return INT2NUM(g_nprobe);
+}
+
+// FraudIndex.nprobe = N
+static VALUE rb_fraud_index_set_nprobe(VALUE self, VALUE n) {
+  (void)self;
+  int v = NUM2INT(n);
+  if (v < 1) rb_raise(rb_eArgError, "nprobe deve ser >= 1");
+  g_nprobe = v;
+  return INT2NUM(v);
+}
+
 void Init_fraud_index(void) {
   VALUE mod = rb_define_module("FraudIndex");
-  rb_define_singleton_method(mod, "load",    RUBY_METHOD_FUNC(rb_fraud_index_load),    1);
-  rb_define_singleton_method(mod, "score",   RUBY_METHOD_FUNC(rb_fraud_index_score),   1);
-  rb_define_singleton_method(mod, "loaded?", RUBY_METHOD_FUNC(rb_fraud_index_loaded),  0);
+  rb_define_singleton_method(mod, "load",     RUBY_METHOD_FUNC(rb_fraud_index_load),       1);
+  rb_define_singleton_method(mod, "score",    RUBY_METHOD_FUNC(rb_fraud_index_score),      1);
+  rb_define_singleton_method(mod, "loaded?",  RUBY_METHOD_FUNC(rb_fraud_index_loaded),     0);
+  rb_define_singleton_method(mod, "nprobe",   RUBY_METHOD_FUNC(rb_fraud_index_get_nprobe), 0);
+  rb_define_singleton_method(mod, "nprobe=",  RUBY_METHOD_FUNC(rb_fraud_index_set_nprobe), 1);
 }
 
 } // extern "C"

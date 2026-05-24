@@ -11,7 +11,8 @@ IVF_PATH = ENV.fetch('IVF_PATH', File.expand_path('native/ivf.bin', __dir__))
 unless FraudIndex.load(IVF_PATH)
   raise "FraudIndex.load failed for #{IVF_PATH}"
 end
-warn "FraudIndex loaded from #{IVF_PATH}"
+FraudIndex.nprobe = Integer(ENV.fetch('NPROBE', '1'))
+warn "FraudIndex loaded from #{IVF_PATH} (nprobe=#{FraudIndex.nprobe})"
 
 class App
   READY_RESPONSE = [200, { 'content-type' => 'text/plain' }.freeze, ['ok'.freeze]].freeze
