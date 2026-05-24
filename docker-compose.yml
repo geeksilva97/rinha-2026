@@ -6,7 +6,7 @@ name: rinha-fraud-detection
 
 services:
   api1: &api
-    image: ghcr.io/geeksilva97/rinha-2026-api@sha256:e96bc39e680f0810e8b2c033cf30357b5a41497dffc995761681416430cf306f
+    image: ghcr.io/geeksilva97/rinha-2026-api@sha256:2043521f4ac3342ca81ead17c4f32674511ff8392b77b8fc4f3d0dfd3c13793d
     platform: linux/amd64
     restart: always
     environment:
