@@ -1,23 +1,20 @@
+name: rinha-fraud-detection
+
+# Image is built and published from the main branch via
+# .github/workflows/publish.yml → ghcr.io/geeksilva97/rinha-2026-api
+# Pinned by digest for reproducibility on the rinha evaluator.
+
 services:
   api1: &api
-    # Both services share this image name so docker builds once and
-    # both containers run off the same image layers → same inode for
-    # /data/ivf.bin → kernel shares page cache pages between procs.
-    image: rinha-fraud-detection-api:latest
-    build:
-      context: .
-      args:
-        CXX_MARCH: ${CXX_MARCH:-haswell}
+    image: ghcr.io/geeksilva97/rinha-2026-api@sha256:e96bc39e680f0810e8b2c033cf30357b5a41497dffc995761681416430cf306f
     platform: linux/amd64
     restart: always
     environment:
       - SOCK=/run/sock/api1.sock
       - IVF_PATH=/data/ivf.bin
-      - NPROBE=${NPROBE:-100}
+      - NPROBE=100
     volumes:
       - sock:/run/sock
-      # ivf.bin lives inside the image (COPY+gunzip at build).
-      # Both containers share the same underlying file via the image layer.
     deploy:
       resources:
         limits:
@@ -29,7 +26,7 @@ services:
     environment:
       - SOCK=/run/sock/api2.sock
       - IVF_PATH=/data/ivf.bin
-      - NPROBE=${NPROBE:-100}
+      - NPROBE=100
 
   lb:
     image: nginx:1.27-alpine
