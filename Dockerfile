@@ -1,9 +1,11 @@
-FROM ruby:4.0.2-slim
+FROM --platform=linux/amd64 ruby:4.0.2-slim
 
+ARG CXX_MARCH=haswell
 ENV BUNDLE_WITHOUT="development:test" \
     BUNDLE_DEPLOYMENT="true" \
     RACK_ENV=production \
-    IVF_PATH=/data/ivf.bin
+    IVF_PATH=/data/ivf.bin \
+    CXX_MARCH=${CXX_MARCH}
 
 WORKDIR /app
 

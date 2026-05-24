@@ -1,6 +1,7 @@
 services:
   api1: &api
     build: .
+    platform: linux/amd64
     restart: always
     environment:
       - SOCK=/run/sock/api1.sock
@@ -26,6 +27,7 @@ services:
 
   lb:
     image: nginx:1.27-alpine
+    platform: linux/amd64
     restart: always
     depends_on:
       - api1
