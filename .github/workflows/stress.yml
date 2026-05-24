@@ -14,39 +14,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: install build deps (g++-14 for c++26)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends g++-14 gzip
-          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 140
-          g++ --version | head -1
-
       - name: cpu info (sanity — we expect AVX2)
         run: |
           uname -m
           lscpu | grep -E 'Model name|Flags' | head -2 | grep -oE 'avx2|avx512f' | sort -u || echo "(no AVX2/AVX512 flags found)"
-
-      - name: cache ivf.bin (key = hash of k_means.cpp + gz)
-        id: cache-ivf
-        uses: actions/cache@v4
-        with:
-          path: native/ivf.bin
-          key: ivf-${{ hashFiles('native/k_means.cpp', 'native/vendor/json.hpp', 'resources/references.json.gz') }}
-
-      - name: build & train k-means (when not cached)
-        if: steps.cache-ivf.outputs.cache-hit != 'true'
-        env:
-          CXX: g++
-        run: |
-          cd native
-          make bin/k_means
-          # decompress references.json from the .gz source
-          gunzip -k -c ../resources/references.json.gz > references.json
-          # train (~3 min) and emit ivf.bin
-          time ./bin/k_means references.json
-
-      - name: confirm ivf.bin exists
-        run: ls -lh native/ivf.bin
 
       - name: install k6
         run: |
