@@ -11,8 +11,8 @@ run.sh
 
 # Source dataset (~50MB, huge; offline-only)
 resources/references.json.gz
-resources/example-payloads.json
 resources/example-references.json
+# Note: example-payloads.json IS shipped — used as boot-time warmup corpus.
 
 # Built artifacts (will be rebuilt for the target platform)
 vendor/vec1/vec1.dylib

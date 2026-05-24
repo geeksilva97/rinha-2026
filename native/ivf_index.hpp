@@ -111,6 +111,18 @@ inline bool load_index(const char *path, IvfIndex &idx) {
   // Hint to the kernel: access pattern is random (not sequential)
   madvise(idx.base, idx.size, MADV_RANDOM);
 
+  // One-shot boot log: dev/inode/size + mapped range. Two containers running
+  // the same image show identical inode + identical mapped address — proof
+  // that the kernel can share page-cache pages across both processes.
+  std::cerr << "ivf.mmap path=" << path
+            << " dev=" << st.st_dev
+            << " inode=" << st.st_ino
+            << " size=" << st.st_size
+            << " addr=" << idx.base
+            << "-" << static_cast<const void *>(
+                       static_cast<const char *>(idx.base) + idx.size)
+            << std::endl;
+
   const char     *p   = static_cast<const char *>(idx.base);
   const uint32_t *hdr = reinterpret_cast<const uint32_t *>(p);
   idx.K = hdr[0];
