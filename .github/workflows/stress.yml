@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      nprobe:
+        description: 'NPROBE value for both API containers'
+        required: false
+        default: '100'
 
 jobs:
   rinha-test:
@@ -37,7 +42,10 @@ jobs:
           ls -lh stress/test/
 
       - name: docker compose up (native amd64, no QEMU)
+        env:
+          NPROBE: ${{ github.event.inputs.nprobe || '100' }}
         run: |
+          echo "NPROBE=$NPROBE"
           docker compose up -d --build
           # wait for /ready to return 200
           for i in $(seq 1 30); do
