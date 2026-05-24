@@ -4,6 +4,7 @@
 native/bin/*
 native/references.json
 native/ivf.bin
+native/_compat/
 
 # Built vec1 extension binaries (arch-specific; build with the Makefile)
 

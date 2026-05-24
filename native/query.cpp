@@ -1,4 +1,6 @@
-#include <cstdio>
+#include <cerrno>
+#include <cstring>
+#include <experimental/simd>
 #include <fcntl.h> // open, O_RDONLY
 #include <iostream>
 #include <limits>
@@ -7,6 +9,33 @@
 #include <unistd.h>   // close
 
 using namespace std;
+namespace stdx = std::experimental;
+
+constexpr uint32_t DIM = 14;
+
+// Distância L2² entre dois vetores DIM-dim.
+// Em ARM NEON (M4): W=4 → 3 SIMD ops cobrem 12 floats, tail de 2 escalar.
+// Em x86 AVX2 (Haswell): W=8 → 1 SIMD op cobre 8 floats, tail de 6 escalar.
+// Em x86 AVX-512: W=16 → tudo escalar (DIM<W), o for SIMD nem entra.
+static inline float dist_sq(const float *a, const float *b) {
+  using simd_f         = stdx::native_simd<float>;
+  constexpr size_t W   = simd_f::size();
+
+  simd_f acc{0.0f};
+  size_t i = 0;
+  for (; i + W <= DIM; i += W) {
+    simd_f va(a + i, stdx::element_aligned);
+    simd_f vb(b + i, stdx::element_aligned);
+    simd_f diff = va - vb;
+    acc += diff * diff;
+  }
+  float result = stdx::reduce(acc);
+  for (; i < DIM; ++i) {
+    float diff = a[i] - b[i];
+    result += diff * diff;
+  }
+  return result;
+}
 
 // payload tx-1329056812 (last_transaction = null)
 float query[14] = {
@@ -20,7 +49,7 @@ const auto PATH = "ivf.bin";
 int main(void) {
   int fd = open(PATH, O_RDONLY);
   if (fd == -1) {
-    perror("fopen");
+    cerr << "open: " << strerror(errno) << endl;
     return 1;
   }
 
@@ -44,19 +73,12 @@ int main(void) {
   float best_dist = std::numeric_limits<float>::max();
   int best_centroid = 0;
 
-  for (int i = 0; i < K; ++i) {
-    float dist = 0;
-    for (int d = 0; d < D; ++d) {
-      float diff = query[d] - centroids[i * D + d];
-      dist += diff * diff;
-    }
-
+  for (uint32_t i = 0; i < K; ++i) {
+    float dist = dist_sq(query, centroids + i * DIM);
     if (dist < best_dist) {
       best_dist = dist;
       best_centroid = i;
     }
-    // agora você tem dist = distância² do query pro centróide i
-    // o que fazer com isso?
   }
 
   cout << "best_centroid: " << best_centroid << "  dist²: " << best_dist << endl;
@@ -77,11 +99,7 @@ int main(void) {
   uint32_t top_idx[TOP_K]  = { 0, 0, 0, 0, 0 };
 
   for (uint32_t i = begin; i < end; ++i) {
-    float dist = 0;
-    for (uint32_t d = 0; d < D; ++d) {
-      float diff = query[d] - vectors[i * D + d];
-      dist += diff * diff;
-    }
+    float dist = dist_sq(query, vectors + i * DIM);
 
     // Se não cabe nem no pior do top-5, descarta
     if (dist >= top_dist[TOP_K - 1]) continue;
