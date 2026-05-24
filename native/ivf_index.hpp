@@ -12,7 +12,6 @@
 
 #include <cerrno>
 #include <cstring>
-#include <experimental/simd>
 #include <fcntl.h>
 #include <iostream>
 #include <limits>
@@ -20,9 +19,20 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+// std::experimental::simd só está implementado em libstdc++ (GCC).
+// Clang/libc++ tem o header mas faltam pedaços (ex: reduce). Restringe a GCC.
+#if defined(__GNUC__) && !defined(__clang__) && __has_include(<experimental/simd>)
+#  include <experimental/simd>
+#  define IVF_HAS_SIMD 1
+#else
+#  define IVF_HAS_SIMD 0
+#endif
+
 namespace ivf {
 
+#if IVF_HAS_SIMD
 namespace stdx = std::experimental;
+#endif
 
 constexpr uint32_t DIM   = 14;
 constexpr int      TOP_K = 5;
@@ -45,9 +55,9 @@ struct IvfIndex {
   const uint8_t  *labels    = nullptr;
 };
 
-// Distância L2² entre dois vetores DIM-dim, via std::experimental::simd.
-// NEON (W=4): 3 SIMD ops + 2 escalar.  AVX2 (W=8): 1 SIMD + 6 escalar.
+// Distância L2² entre dois vetores DIM-dim.
 static inline float dist_sq(const float *a, const float *b) {
+#if IVF_HAS_SIMD
   using simd_f       = stdx::native_simd<float>;
   constexpr size_t W = simd_f::size();
 
@@ -65,6 +75,15 @@ static inline float dist_sq(const float *a, const float *b) {
     result += diff * diff;
   }
   return result;
+#else
+  // Fallback escalar (compilador auto-vetoriza com -O2 + DIM constexpr)
+  float d = 0;
+  for (uint32_t i = 0; i < DIM; ++i) {
+    float diff = a[i] - b[i];
+    d += diff * diff;
+  }
+  return d;
+#endif
 }
 
 // Abre + mmap + valida o header. Retorna true em sucesso.

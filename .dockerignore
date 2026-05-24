@@ -20,6 +20,20 @@ vendor/vec1/*.so
 vendor/vec1/*.o
 vendor/vec1/*.a
 
+# Ruby C++ extension artifacts built locally (Mach-O, won't link on Linux)
+ext/**/Makefile
+ext/**/*.o
+ext/**/*.so
+ext/**/*.bundle
+ext/**/*.bundle.dSYM
+ext/**/mkmf.log
+
+# native/ standalone build outputs + dev quirks
+native/bin/
+native/_compat/
+native/references.json
+native/ivf.bin
+
 # Upstream extras not used at runtime
 vendor/vec1/doc
 vendor/vec1/test

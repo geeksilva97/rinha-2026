@@ -4,8 +4,12 @@ services:
     restart: always
     environment:
       - SOCK=/run/sock/api1.sock
+      - IVF_PATH=/data/ivf.bin
     volumes:
       - sock:/run/sock
+      # Mesma cópia do ivf.bin em ambos containers → mesmo inode no host
+      # → kernel compartilha as páginas do page cache (RAM única pra 2 procs).
+      - ./native/ivf.bin:/data/ivf.bin:ro
     deploy:
       resources:
         limits:
@@ -16,6 +20,7 @@ services:
     <<: *api
     environment:
       - SOCK=/run/sock/api2.sock
+      - IVF_PATH=/data/ivf.bin
 
   lb:
     image: nginx:1.27-alpine

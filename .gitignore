@@ -6,6 +6,14 @@ native/references.json
 native/ivf.bin
 native/_compat/
 
+# Ruby C extension build artifacts
+ext/**/Makefile
+ext/**/*.o
+ext/**/*.so
+ext/**/*.bundle
+ext/**/*.bundle.dSYM
+ext/**/mkmf.log
+
 # Built vec1 extension binaries (arch-specific; build with the Makefile)
 
 # Stress test data + per-run outputs (download via the README; not in source control)
