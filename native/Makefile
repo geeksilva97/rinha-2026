@@ -18,6 +18,16 @@ $(BIN_DIR)/query: query.cpp | $(BIN_DIR)
 $(BIN_DIR)/bench: bench.cpp | $(BIN_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
+# Standalone HTTP server (replaces Puma+Ruby). Links picohttpparser.c
+# directly. -march=native locally; CI/Docker should set CXX_MARCH explicitly.
+$(BIN_DIR)/server: CXXFLAGS += -O2 -march=native
+# Static-link libstdc++/libgcc so the binary is portable across glibcxx versions
+# (lets us use a tiny runtime image like debian:bookworm-slim regardless of
+# which gcc the build container had).
+$(BIN_DIR)/server: LDFLAGS += -static-libstdc++ -static-libgcc
+$(BIN_DIR)/server: server.cpp fraud_payload.hpp ivf_index.hpp vendor/picohttpparser/picohttpparser.h vendor/picohttpparser/picohttpparser.c | $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ server.cpp vendor/picohttpparser/picohttpparser.c $(LDFLAGS)
+
 # k_means runs offline on the build machine — safe to use -march=native
 $(BIN_DIR)/k_means: CXXFLAGS += -march=native
 $(BIN_DIR)/k_means: k_means.cpp ivf_index.hpp | $(BIN_DIR)
