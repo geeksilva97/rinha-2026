@@ -69,7 +69,7 @@ static VALUE rb_fraud_index_get_nprobe(VALUE self) {
 static VALUE rb_fraud_index_set_nprobe(VALUE self, VALUE n) {
   (void)self;
   int v = NUM2INT(n);
-  if (v < 1) rb_raise(rb_eArgError, "nprobe deve ser >= 1");
+  if (v < 1) rb_raise(rb_eArgError, "nprobe must be >= 1");
   g_nprobe = v;
   return INT2NUM(v);
 }
