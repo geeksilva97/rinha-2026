@@ -2,6 +2,7 @@
 #include "vendor/json.hpp"
 #include <bit>
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <random>
@@ -18,6 +19,9 @@ std::mt19937 rng(42); // seed
 constexpr uint32_t K = 1700;
 constexpr uint32_t T = 20;
 constexpr uint32_t DIM = 14;
+// Early-exit threshold: sum of L2 movement across all centroids per iteration.
+// 1e-4 means the centroids essentially stopped moving (avg < ~6e-8 per centroid).
+constexpr float    EPS_MOVE = 1e-4f;
 
 int main(int argc, char *argv[]) {
   if (argc < 2) {
@@ -40,6 +44,7 @@ int main(int argc, char *argv[]) {
   std::vector<size_t> assignments(data.size());
   std::vector<std::vector<float>> centroids(K);
   std::sample(points.begin(), points.end(), centroids.begin(), K, rng);
+  std::vector<std::vector<float>> prev_centroids(K, std::vector<float>(DIM, 0.0f));
   std::vector<std::vector<float>> sum(K, std::vector<float>(DIM, 0.0f));
   std::vector<int> count(K, 0);
 
@@ -51,6 +56,9 @@ int main(int argc, char *argv[]) {
 
   for (uint32_t t = 0; t < T; ++t) {
     auto iter_start = clock::now();
+
+    // snapshot centroids before this iteration's update (for convergence check)
+    for (uint32_t j = 0; j < K; ++j) prev_centroids[j] = centroids[j];
 
     // ASSIGN (hot loop: N × K × D ops; dist_sq uses SIMD when available)
     for (size_t i = 0; i < data.size(); ++i) {
@@ -87,13 +95,26 @@ int main(int argc, char *argv[]) {
       }
     }
 
+    // total L2 movement of centroids vs previous iteration
+    float move = 0.0f;
+    for (uint32_t j = 0; j < K; ++j) {
+      move += std::sqrt(dist_sq(centroids[j].data(), prev_centroids[j].data()));
+    }
+
     auto iter_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         clock::now() - iter_start).count();
     auto total_s = std::chrono::duration_cast<std::chrono::seconds>(
         clock::now() - t_start).count();
     cout << "  iter " << (t + 1) << "/" << T
          << "  took=" << iter_ms << "ms"
-         << "  total=" << total_s << "s\n" << std::flush;
+         << "  total=" << total_s << "s"
+         << "  move=" << move << "\n" << std::flush;
+
+    if (move < EPS_MOVE) {
+      cout << "converged at iter " << (t + 1) << " (move=" << move
+           << " < eps=" << EPS_MOVE << ")\n";
+      break;
+    }
   }
 
   // save file

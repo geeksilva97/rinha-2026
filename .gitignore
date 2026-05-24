@@ -5,6 +5,7 @@ native/bin/*
 native/references.json
 native/ivf.bin
 native/_compat/
+# ivf.bin.gz IS committed (shipped in the image); raw ivf.bin is local only
 
 # Ruby C extension build artifacts
 ext/**/Makefile

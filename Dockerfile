@@ -16,7 +16,7 @@ RUN apt-get update \
 COPY Gemfile Gemfile.lock ./
 RUN bundle install --jobs 4
 
-# Header do IVF index (compartilhado entre native/ standalone e a extension)
+# IVF index header (shared between native/ standalone and the extension)
 COPY native/ivf_index.hpp ./native/ivf_index.hpp
 
 # Build the C++ extension during image build (shipped in the image)
@@ -25,6 +25,12 @@ RUN cd ext/fraud_index \
     && ruby extconf.rb \
     && make -j$(nproc) \
     && rm -f *.o   # drop only intermediates, keep the .so
+
+# Ship the trained IVF index inside the image.
+# Committed as gzip (~42MB, fits GitHub); decompressed here at build time.
+COPY native/ivf.bin.gz /data/ivf.bin.gz
+RUN gunzip /data/ivf.bin.gz \
+    && ls -lh /data/ivf.bin
 
 COPY resources ./resources
 COPY app.rb config.ru vectorizer.rb ./

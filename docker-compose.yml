@@ -1,6 +1,13 @@
 services:
   api1: &api
-    build: .
+    # Both services share this image name so docker builds once and
+    # both containers run off the same image layers → same inode for
+    # /data/ivf.bin → kernel shares page cache pages between procs.
+    image: rinha-fraud-detection-api:latest
+    build:
+      context: .
+      args:
+        CXX_MARCH: ${CXX_MARCH:-haswell}
     platform: linux/amd64
     restart: always
     environment:
@@ -9,9 +16,8 @@ services:
       - NPROBE=${NPROBE:-100}
     volumes:
       - sock:/run/sock
-      # Same ivf.bin in both containers → same inode on the host
-      # → kernel shares page cache pages (single RAM region for both procs).
-      - ./native/ivf.bin:/data/ivf.bin:ro
+      # ivf.bin lives inside the image (COPY+gunzip at build).
+      # Both containers share the same underlying file via the image layer.
     deploy:
       resources:
         limits:
