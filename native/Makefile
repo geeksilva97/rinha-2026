@@ -1,4 +1,4 @@
-CXX = g++-15
+CXX ?= g++-15
 SDK_PATH := $(shell xcrun --show-sdk-path 2>/dev/null)
 CXXFLAGS = -O2 -Wall -std=c++26 $(if $(SDK_PATH),-isysroot $(SDK_PATH)) -I_compat
 
