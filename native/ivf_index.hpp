@@ -206,10 +206,7 @@ inline void top_n_centroids(const IvfIndex &idx, const int16_t *query,
     out_clusters[k] = 0;
   }
 
-  constexpr uint32_t PREFETCH_AHEAD = 8;
   for (uint32_t i = 0; i < idx.K; ++i) {
-    if (i + PREFETCH_AHEAD < idx.K)
-      __builtin_prefetch(idx.centroids + (i + PREFETCH_AHEAD) * STRIDE, 0, 0);
     int64_t d = dist_sq(query, idx.centroids + i * STRIDE);
     if (d >= top_d[nprobe - 1]) continue;
 
@@ -231,14 +228,7 @@ inline void merge_top5_from_cluster(const IvfIndex &idx, const int16_t *query,
   uint32_t begin = idx.offsets[cluster];
   uint32_t end   = idx.offsets[cluster + 1];
 
-  // Software prefetch — hide memory latency by pulling future vectors
-  // into L1 while we process the current one. Each vector is 32 bytes
-  // (STRIDE int16); prefetch 8 vectors ahead (~256 bytes = 4 cache lines).
-  constexpr uint32_t PREFETCH_AHEAD = 8;
-
   for (uint32_t i = begin; i < end; ++i) {
-    if (i + PREFETCH_AHEAD < end)
-      __builtin_prefetch(idx.vectors + (i + PREFETCH_AHEAD) * STRIDE, 0, 0);
     int64_t d = dist_sq(query, idx.vectors + i * STRIDE);
     if (d >= top_d[TOP_K - 1]) continue;
 
