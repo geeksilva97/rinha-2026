@@ -16,7 +16,9 @@ using ivf::dist_sq;
 
 std::mt19937 rng(42); // seed
 
-constexpr uint32_t K = 1700;
+// K is overridable via CLI for retraining experiments (e.g. K=4096).
+// Default 1700 matches the originally shipped ivf.bin.
+uint32_t K = 1700;
 constexpr uint32_t T = 20;
 constexpr uint32_t DIM = 14;
 // Early-exit threshold: sum of L2 movement across all centroids per iteration.
@@ -25,11 +27,12 @@ constexpr float    EPS_MOVE = 1e-4f;
 
 int main(int argc, char *argv[]) {
   if (argc < 2) {
-    std::cerr << "uso: " << argv[0] << " <references.json>\n";
+    std::cerr << "uso: " << argv[0] << " <references.json> [K]\n";
     return 1;
   }
 
   std::string path = argv[1];
+  if (argc >= 3) K = static_cast<uint32_t>(std::atoi(argv[2]));
   std::ifstream f(path);
   json data = json::parse(f);
   std::vector<std::vector<float>> points;
