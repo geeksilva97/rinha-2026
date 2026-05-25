@@ -4,8 +4,10 @@ require 'mkmf'
 native_dir = File.expand_path('../../native', __dir__)
 $INCFLAGS << " -I#{native_dir}"
 
-# C++ flags
-$CXXFLAGS << ' -std=c++26 -O2 -Wall'
+# C++ flags. -O3 + loop unrolling for the hot dist_sq inner loop (int16
+# SIMD). -fno-strict-aliasing avoids any UB on the type-punned mmap
+# pointer reinterprets used by the IVF layout.
+$CXXFLAGS << ' -std=c++26 -O3 -funroll-loops -fno-strict-aliasing -Wall'
 # Debug symbols + frame pointer for perf/profiling.
 # Enable via PROFILE=1 to avoid bloating the production .so.
 $CXXFLAGS << ' -g -fno-omit-frame-pointer' if ENV['PROFILE'] == '1'
