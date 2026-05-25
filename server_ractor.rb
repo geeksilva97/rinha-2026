@@ -13,7 +13,8 @@ require 'oj'
 idx_path = ENV.fetch('IVF_PATH', '/data/ivf.bin')
 FraudIndex.load(idx_path) or abort "FraudIndex.load failed for #{idx_path}"
 FraudIndex.nprobe = Integer(ENV.fetch('NPROBE', '70'))
-warn "FraudIndex loaded (nprobe=#{FraudIndex.nprobe})"
+FraudIndex.fast_nprobe = Integer(ENV.fetch('FAST_NPROBE', '5'))
+warn "FraudIndex loaded (nprobe=#{FraudIndex.nprobe} fast_nprobe=#{FraudIndex.fast_nprobe})"
 
 WARMUP_ROUNDS = Integer(ENV.fetch('WARMUP', '10'))
 warmup_path = '/app/resources/example-payloads.json'

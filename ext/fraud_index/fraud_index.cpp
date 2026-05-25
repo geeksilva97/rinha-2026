@@ -20,6 +20,10 @@ using namespace ivf;
 static IvfIndex g_index;
 static bool     g_loaded = false;
 static int      g_nprobe = 1;
+// Adaptive nprobe: first pass uses g_fast_nprobe; only re-runs at g_nprobe
+// when the fast result is borderline (fraud_count == 2 or 3 of 5) — i.e.
+// could flip the approval decision under more thorough search.
+static int      g_fast_nprobe = 5;
 
 // Lightweight per-call timing. relaxed loads/stores are fine — we only
 // read these in FraudIndex.stats and a small atomic skew is acceptable
@@ -412,13 +416,30 @@ void parse_payload(const char *raw, size_t len, float *out) {
 }
 
 // Counts how many of the top-5 nearest references are labeled fraud.
-// The query comes in float (parsed from the payload); we quantize to
-// the same int16 scale the index was built with, then run ivf_score
-// in integer space.
+// Adaptive two-pass: quick scan with a small nprobe; only re-scan with the
+// full nprobe when the decision is borderline (could flip the approval).
+// For TOP_K=5 with threshold 0.6, the flippable counts are 2 and 3:
+//   0,1 → approved=true, far from threshold
+//   2   → approved=true,  but 3rd vector could be borderline
+//   3   → approved=false, but loose
+//   4,5 → approved=false, far from threshold
 int fraud_count(const IvfIndex &idx, const float *query, int nprobe) {
   alignas(32) int16_t q16[STRIDE];
   quantize_query(query, idx.scale, q16);
-  return static_cast<int>(ivf_score(idx, q16, nprobe) * static_cast<float>(TOP_K) + 0.5f);
+
+  const int fast_np = g_fast_nprobe;
+  // Skip the fast path if it would be the same as full (or larger).
+  if (fast_np >= nprobe) {
+    return static_cast<int>(ivf_score(idx, q16, nprobe) * static_cast<float>(TOP_K) + 0.5f);
+  }
+
+  float s = ivf_score(idx, q16, fast_np);
+  int count = static_cast<int>(s * static_cast<float>(TOP_K) + 0.5f);
+  if (count == 2 || count == 3) {
+    s = ivf_score(idx, q16, nprobe);
+    count = static_cast<int>(s * static_cast<float>(TOP_K) + 0.5f);
+  }
+  return count;
 }
 
 } // anon namespace
@@ -535,6 +556,19 @@ static VALUE rb_fraud_index_set_nprobe(VALUE self, VALUE n) {
   return INT2NUM(v);
 }
 
+static VALUE rb_fraud_index_get_fast_nprobe(VALUE self) {
+  (void)self;
+  return INT2NUM(g_fast_nprobe);
+}
+
+static VALUE rb_fraud_index_set_fast_nprobe(VALUE self, VALUE n) {
+  (void)self;
+  int v = NUM2INT(n);
+  if (v < 1) rb_raise(rb_eArgError, "fast_nprobe must be >= 1");
+  g_fast_nprobe = v;
+  return INT2NUM(v);
+}
+
 void Init_fraud_index(void) {
   VALUE mod = rb_define_module("FraudIndex");
 
@@ -542,6 +576,7 @@ void Init_fraud_index(void) {
   // Keep them NOT marked as Ractor-safe.
   rb_define_singleton_method(mod, "load",                 RUBY_METHOD_FUNC(rb_fraud_index_load),                  1);
   rb_define_singleton_method(mod, "nprobe=",              RUBY_METHOD_FUNC(rb_fraud_index_set_nprobe),            1);
+  rb_define_singleton_method(mod, "fast_nprobe=",         RUBY_METHOD_FUNC(rb_fraud_index_set_fast_nprobe),       1);
 
   // Hot-path query methods: pure functions over a read-only mmap'd index
   // (g_index, g_nprobe written once at boot; no Ruby callbacks; no shared
@@ -555,6 +590,7 @@ void Init_fraud_index(void) {
   rb_define_singleton_method(mod, "parse_payload",        RUBY_METHOD_FUNC(rb_fraud_index_parse_payload),         2);
   rb_define_singleton_method(mod, "loaded?",              RUBY_METHOD_FUNC(rb_fraud_index_loaded),                0);
   rb_define_singleton_method(mod, "nprobe",               RUBY_METHOD_FUNC(rb_fraud_index_get_nprobe),            0);
+  rb_define_singleton_method(mod, "fast_nprobe",          RUBY_METHOD_FUNC(rb_fraud_index_get_fast_nprobe),       0);
   rb_define_singleton_method(mod, "stats",                RUBY_METHOD_FUNC(rb_fraud_index_stats),                 0);
   rb_define_singleton_method(mod, "stats_reset",          RUBY_METHOD_FUNC(rb_fraud_index_stats_reset),           0);
 #ifdef HAVE_RB_EXT_RACTOR_SAFE
