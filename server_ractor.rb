@@ -1,8 +1,9 @@
-# Minimal Ractor-per-request HTTP server (experimental).
+# Ractor-pool HTTP server.
 #
-# main thread: accept(); spawn a Ractor with the FD. Ractor handles the
-# full request lifecycle (read, parse, FraudIndex call, write, close) and
-# dies. No IPC for the data path.
+# Pre-spawns ACCEPTORS worker Ractors at boot. Each worker loops on
+# `Ractor.receive` waiting for an FD; the main thread accepts and
+# dispatches via round-robin. Eliminates the ~150µs Ractor.new cost
+# per request that the spawn-per-request design paid.
 
 $LOAD_PATH.unshift('/app/ext/fraud_index')
 require 'fraud_index'
@@ -42,71 +43,81 @@ READY_RESPONSE = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length:
 NOT_FOUND      = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".freeze
 BAD_REQUEST    = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".freeze
 
+# Worker Ractor body: loops on receive(fd), handles one request per loop,
+# never exits. Same per-request logic as the spawn-per-request version,
+# but the VM/heap/branch-predictor state stays hot across requests.
+WORKER_BODY = proc do
+  loop do
+    fd = Ractor.receive
+    break if fd == :stop
+
+    io = IO.for_fd(fd, "r+", autoclose: true)
+    response = nil
+    begin
+      raw = io.readpartial(8192)
+      eol = raw.index("\r\n")
+      if eol
+        method, path, _ = raw.byteslice(0, eol).split(" ", 3)
+        if method == "GET" && path == "/ready"
+          response = READY_RESPONSE
+        elsif method == "POST" && path == "/fraud-score"
+          head_end = raw.index("\r\n\r\n")
+          if head_end
+            cl_match = raw.byteslice(0, head_end).match(/^Content-Length:\s*(\d+)/i)
+            cl = cl_match ? cl_match[1].to_i : 0
+            body_start = head_end + 4
+            body = raw.byteslice(body_start, raw.bytesize - body_start) || +""
+            while body.bytesize < cl
+              chunk = io.readpartial(cl - body.bytesize)
+              break unless chunk
+              body << chunk
+            end
+            count = FraudIndex.fraud_count_payload(body)
+            response = RESPONSES[count]
+          else
+            response = BAD_REQUEST
+          end
+        else
+          response = NOT_FOUND
+        end
+      else
+        response = BAD_REQUEST
+      end
+    rescue
+      response = BAD_REQUEST
+    end
+    begin
+      io.write(response) if response
+    rescue
+      # client gone
+    ensure
+      io.close rescue nil
+    end
+  end
+end
+
 sock_path = ENV.fetch('SOCK')
 File.unlink(sock_path) if File.exist?(sock_path)
 server = UNIXServer.new(sock_path)
 File.chmod(0o666, sock_path)
 warn "Listening on unix://#{sock_path}"
 
-# Multiple acceptor threads parallelize the accept+Ractor.new path. With
-# 1 thread, a Ractor.new (~150µs) blocks all incoming connections behind
-# it. With N threads, accept can be in flight on N-1 while one is spawning.
-ACCEPTORS = Integer(ENV.fetch('ACCEPTORS', '2'))
-warn "Acceptors: #{ACCEPTORS}"
+# Pool size — kept under the existing ACCEPTORS env (semantic shift: was
+# "accept threads", now "worker Ractors"). Default 4 matched the
+# spawn-per-request sweep sweet spot on the VM.
+ACCEPTORS = Integer(ENV.fetch('ACCEPTORS', '4'))
+warn "Worker pool size: #{ACCEPTORS}"
 
-threads = ACCEPTORS.times.map do
-  Thread.new do
-    loop do
-      client = server.accept
-      fd = client.fileno
-      client.autoclose = false   # ownership transferred to the Ractor
+workers = ACCEPTORS.times.map { Ractor.new(&WORKER_BODY) }
 
-      Ractor.new(fd) do |fd|
-        io = IO.for_fd(fd, "r+", autoclose: true)
-        response = nil
-        begin
-          raw = io.readpartial(8192)
-          eol = raw.index("\r\n")
-          if eol
-            method, path, _ = raw.byteslice(0, eol).split(" ", 3)
-            if method == "GET" && path == "/ready"
-              response = READY_RESPONSE
-            elsif method == "POST" && path == "/fraud-score"
-              head_end = raw.index("\r\n\r\n")
-              if head_end
-                cl_match = raw.byteslice(0, head_end).match(/^Content-Length:\s*(\d+)/i)
-                cl = cl_match ? cl_match[1].to_i : 0
-                body_start = head_end + 4
-                body = raw.byteslice(body_start, raw.bytesize - body_start) || +""
-                while body.bytesize < cl
-                  chunk = io.readpartial(cl - body.bytesize)
-                  break unless chunk
-                  body << chunk
-                end
-                count = FraudIndex.fraud_count_payload(body)
-                response = RESPONSES[count]
-              else
-                response = BAD_REQUEST
-              end
-            else
-              response = NOT_FOUND
-            end
-          else
-            response = BAD_REQUEST
-          end
-        rescue
-          response = BAD_REQUEST
-        end
-        begin
-          io.write(response) if response
-        rescue
-          # client gone
-        ensure
-          io.close rescue nil
-        end
-      end
-    end
-  end
+# Single accept loop in the main thread. accept() is cheap; the costly
+# Ractor.new was the reason we ran multiple accept threads. With a pool,
+# main only does accept + a short send().
+i = 0
+loop do
+  client = server.accept
+  fd = client.fileno
+  client.autoclose = false       # ownership transfers to the worker Ractor
+  workers[i % ACCEPTORS].send(fd)
+  i += 1
 end
-
-threads.each(&:join)
