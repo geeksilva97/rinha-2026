@@ -84,18 +84,20 @@ static inline int64_t dist_sq(const int16_t *a, const int16_t *b) {
   // Load 16 int16 from each (one full AVX2 256-bit register).
   __m256i va = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(a));
   __m256i vb = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(b));
-  __m256i diff = _mm256_sub_epi16(va, vb);      // 16 int16 differences
-  // vpmaddwd: multiplies pairs of int16, sums adjacent pairs into int32.
-  // 16 int16 in → 8 int32 out (each = diff[2k]*diff[2k] + diff[2k+1]*diff[2k+1]).
-  __m256i sq   = _mm256_madd_epi16(diff, diff);
+  __m256i diff = _mm256_sub_epi16(va, vb);      // 16 int16 diffs (safe: scale=16383 → max diff = 32766 < INT16_MAX)
+  __m256i sq   = _mm256_madd_epi16(diff, diff); // 8 int32 (each = d²+d² ≤ 2 × 32766² ≈ 2.147e9 ≤ INT32_MAX)
 
-  // Horizontal sum 8 int32 → scalar (kept in int64 to be safe).
-  __m128i lo = _mm256_castsi256_si128(sq);
-  __m128i hi = _mm256_extracti128_si256(sq, 1);
-  __m128i s4 = _mm_add_epi32(lo, hi);            // 4 int32
-  s4 = _mm_hadd_epi32(s4, s4);                   // 2 int32
-  s4 = _mm_hadd_epi32(s4, s4);                   // 1 int32 (replicated)
-  return static_cast<int64_t>(static_cast<int32_t>(_mm_cvtsi128_si32(s4)));
+  // Sum of 8 int32 can reach 8 × 2.147e9 = 1.7e10, OVERFLOWS int32.
+  // Extend each int32 to int64 before summing.
+  __m256i sq_lo64 = _mm256_cvtepi32_epi64(_mm256_castsi256_si128(sq));        // 4 int64 (sq[0..3])
+  __m256i sq_hi64 = _mm256_cvtepi32_epi64(_mm256_extracti128_si256(sq, 1));   // 4 int64 (sq[4..7])
+  __m256i sum64   = _mm256_add_epi64(sq_lo64, sq_hi64);                       // 4 int64
+
+  // Horizontal sum 4 int64 → scalar.
+  __m128i lo = _mm256_castsi256_si128(sum64);
+  __m128i hi = _mm256_extracti128_si256(sum64, 1);
+  __m128i s2 = _mm_add_epi64(lo, hi);                                         // 2 int64
+  return _mm_extract_epi64(s2, 0) + _mm_extract_epi64(s2, 1);
 #else
   int64_t d = 0;
   for (uint32_t i = 0; i < DIM; ++i) {
