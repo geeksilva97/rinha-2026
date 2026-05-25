@@ -48,53 +48,65 @@ server = UNIXServer.new(sock_path)
 File.chmod(0o666, sock_path)
 warn "Listening on unix://#{sock_path}"
 
-loop do
-  client = server.accept
-  fd = client.fileno
-  client.autoclose = false   # ownership transferred to the Ractor
+# Multiple acceptor threads parallelize the accept+Ractor.new path. With
+# 1 thread, a Ractor.new (~150µs) blocks all incoming connections behind
+# it. With N threads, accept can be in flight on N-1 while one is spawning.
+ACCEPTORS = Integer(ENV.fetch('ACCEPTORS', '2'))
+warn "Acceptors: #{ACCEPTORS}"
 
-  Ractor.new(fd) do |fd|
-    io = IO.for_fd(fd, "r+", autoclose: true)
-    response = nil
-    begin
-      raw = io.readpartial(8192)
-      eol = raw.index("\r\n")
-      if eol
-        method, path, _ = raw.byteslice(0, eol).split(" ", 3)
-        if method == "GET" && path == "/ready"
-          response = READY_RESPONSE
-        elsif method == "POST" && path == "/fraud-score"
-          head_end = raw.index("\r\n\r\n")
-          if head_end
-            cl_match = raw.byteslice(0, head_end).match(/^Content-Length:\s*(\d+)/i)
-            cl = cl_match ? cl_match[1].to_i : 0
-            body_start = head_end + 4
-            body = raw.byteslice(body_start, raw.bytesize - body_start) || +""
-            while body.bytesize < cl
-              chunk = io.readpartial(cl - body.bytesize)
-              break unless chunk
-              body << chunk
+threads = ACCEPTORS.times.map do
+  Thread.new do
+    loop do
+      client = server.accept
+      fd = client.fileno
+      client.autoclose = false   # ownership transferred to the Ractor
+
+      Ractor.new(fd) do |fd|
+        io = IO.for_fd(fd, "r+", autoclose: true)
+        response = nil
+        begin
+          raw = io.readpartial(8192)
+          eol = raw.index("\r\n")
+          if eol
+            method, path, _ = raw.byteslice(0, eol).split(" ", 3)
+            if method == "GET" && path == "/ready"
+              response = READY_RESPONSE
+            elsif method == "POST" && path == "/fraud-score"
+              head_end = raw.index("\r\n\r\n")
+              if head_end
+                cl_match = raw.byteslice(0, head_end).match(/^Content-Length:\s*(\d+)/i)
+                cl = cl_match ? cl_match[1].to_i : 0
+                body_start = head_end + 4
+                body = raw.byteslice(body_start, raw.bytesize - body_start) || +""
+                while body.bytesize < cl
+                  chunk = io.readpartial(cl - body.bytesize)
+                  break unless chunk
+                  body << chunk
+                end
+                count = FraudIndex.fraud_count_payload(body)
+                response = RESPONSES[count]
+              else
+                response = BAD_REQUEST
+              end
+            else
+              response = NOT_FOUND
             end
-            count = FraudIndex.fraud_count_payload(body)
-            response = RESPONSES[count]
           else
             response = BAD_REQUEST
           end
-        else
-          response = NOT_FOUND
+        rescue
+          response = BAD_REQUEST
         end
-      else
-        response = BAD_REQUEST
+        begin
+          io.write(response) if response
+        rescue
+          # client gone
+        ensure
+          io.close rescue nil
+        end
       end
-    rescue
-      response = BAD_REQUEST
-    end
-    begin
-      io.write(response) if response
-    rescue
-      # client gone
-    ensure
-      io.close rescue nil
     end
   end
 end
+
+threads.each(&:join)
