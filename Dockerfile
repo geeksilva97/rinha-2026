@@ -35,7 +35,7 @@ RUN gunzip /data/ivf.bin.gz \
     && ls -lh /data/ivf.bin
 
 COPY resources ./resources
-COPY app.rb config.ru vectorizer.rb server_ractor.rb ./
+COPY app.rb config.ru vectorizer.rb server_ractor.rb server_threadpool.rb ./
 COPY config ./config
 
 # Default entrypoint is Puma. The Ractor-per-request server is also
