@@ -10,13 +10,13 @@ services:
     image: ghcr.io/geeksilva97/rinha-2026-api@sha256:d07e4adfd3b979275f51391b6c67621005bf3fec7bdc4985cb0f086134248c1b
     platform: linux/amd64
     restart: always
-    command: ["bundle", "exec", "ruby", "-W0", "/app/server_threadpool.rb"]
+    command: ["bundle", "exec", "ruby", "-W0", "/app/server_ractor.rb"]
     environment:
       - SOCK=/run/sock/api1.sock
       - IVF_PATH=/data/ivf.bin
       - NPROBE=70
       - WARMUP=10
-      - ACCEPTORS=4
+      - ACCEPTORS=2
     volumes:
       - sock:/run/sock
     healthcheck:
@@ -38,7 +38,7 @@ services:
       - IVF_PATH=/data/ivf.bin
       - NPROBE=70
       - WARMUP=10
-      - ACCEPTORS=4
+      - ACCEPTORS=2
     healthcheck:
       test: ["CMD-SHELL", "test -S /run/sock/api2.sock"]
       interval: 1s
