@@ -166,18 +166,98 @@ Two surprises:
    differed was the *number of cores the scheduler had to work with*.
 
 2. **Even at ACC=2, Threads lost to Ractors on Mac mini.** Same code
-   path, same handler logic. The plausible explanation is GC: Thread
-   pool shares one Ruby heap across all workers, so a minor GC pause
-   freezes every worker briefly. On a 2-core box where each pause is
-   already a visible chunk of wall time relative to the per-request
-   budget, those pauses show up at the tail. Ractor pool splits the
-   heap per worker — a Ractor's GC freezes only itself, the others
-   keep serving.
+   path, same handler logic, same number of workers. See the GC-pressure
+   hypothesis below for the most plausible explanation.
 
-The Mac mini effectively tightens *both* axes that decide the
-Thread-vs-Ractor tradeoff:
-- Fewer cores → context-switching gets expensive faster.
-- 2-core throughput is tight enough that any STW GC pause is visible.
+## Why Ractors win at ACC=2 on Mac mini — the GC hypothesis
+
+### Per-request allocations
+
+Each request path through `server_ractor.rb` / `server_threadpool.rb`
+allocates roughly 5–10 short-lived objects:
+
+```
+IO.for_fd(fd, "r+", autoclose: true)                  → new IO
+raw = io.readpartial(8192)                            → new String (raw)
+raw.index("\r\n")                                     → Integer (no alloc)
+raw.byteslice(0, eol).split(" ", 3)                   → 1 substring + 1 Array of 3 substrings
+raw.byteslice(0, head_end).match(/Content-Length...) → MatchData + capture String
+cl_match[1].to_i                                      → Integer (likely Fixnum)
+raw.byteslice(body_start, ...)                        → new String for body
+io.write(response); io.close                          → no alloc (response is frozen)
+```
+
+~7–10 small heap objects per request. At 900 RPS that's **6300–9000
+heap allocations per second per container**. None of them survive past
+the request — they're pure short-lived garbage.
+
+### Two ways to garbage-collect that pile
+
+**Thread pool — one shared heap:**
+
+All worker threads + the accept thread allocate into the same Ruby
+heap. Eden fills at the full ~9000 obj/s rate. When it crosses the
+threshold, Ruby triggers a minor GC — a stop-the-world pause that
+freezes **every Ruby thread in the process**.
+
+The pause itself is short (10–100 µs on a small heap), but it stops
+work on every core. On a 2-core Mac mini under 0.4 CPU quota, "every
+core stopped" means the whole container makes no forward progress for
+the duration of the pause. Repeat ~tens of times per second; the
+cumulative effect is microsecond-scale tail-latency outliers stacked
+on top of CFS throttling.
+
+**Ractor pool — heap per Ractor:**
+
+Each worker Ractor has its own object heap. Per Ractor that means
+~4500 obj/s instead of 9000, so each one's minor GC triggers half as
+often. More importantly, **a Ractor's GC freezes only that Ractor**.
+The other Ractor keeps serving requests during the pause. Constants
+shared across Ractors (RESPONSES, FraudIndex, frozen header Strings)
+are reachable from a shared/frozen pool — they don't get walked by
+either heap's collector.
+
+Net effect under tight resources:
+- Same total GC work, but **distributed** instead of synchronized.
+- p99 tail flattens because no single moment freezes the whole container.
+
+### Why the VM didn't show this
+
+The VM has 4 vCPUs (2 phys + HT). A STW pause that stops 2 worker
+threads leaves 2 more scheduling slots usable by accept + k6 collector
+threads — the container keeps doing *something* during the freeze.
+On Mac mini, with 2 phys cores and 2 worker threads, an STW pause
+pins both cores idle (relative to API work) until it ends. Same pause,
+much bigger visibility.
+
+This is also why the **threadpool wins easily on the VM** (5548 / 1.96 ms
+at ACC=4): on a 4-core machine the GC pauses don't pin the system,
+and the Thread-pool's cheaper `Thread::Queue` IPC dominates.
+
+### Alternative hypotheses we did not rule out
+
+- **Mutex contention on Thread::Queue.** On a 2-core box, accept and
+  worker threads may ping-pong the queue's mutex cache line. The
+  Ractor port uses different synchronization that may favor 2-core
+  hardware.
+
+- **Kernel scheduler behavior.** Threads of one process share resources
+  and the kernel may preempt them more aggressively. Each Ractor
+  presents as a more independent kernel-thread, possibly getting
+  different scheduling weight.
+
+- **Statistical noise.** Mac mini run-to-run spread is ~100 points.
+  The Ractor-vs-Threadpool delta at ACC=2 is ~106 points based on
+  *one* Threadpool run vs two Ractor runs. The GC hypothesis is the
+  most internally consistent explanation, but one more Threadpool run
+  could land at 4350 and reopen the question.
+
+We didn't prove the GC story rigorously — would have needed `GC.stat`
+deltas exposed via a /stats endpoint over the test, and ~5 runs per
+config. Cost wasn't worth it once Ractor pool ACC=2 settled as the
+empirically best config.
+
+## The corrected mental model
 
 So the corrected mental model now includes a **target-machine** column:
 
