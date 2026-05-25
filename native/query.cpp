@@ -21,7 +21,9 @@ int main(void) {
   cout << "K=" << idx.K << "  D=" << idx.D << "  N=" << idx.N << endl;
 
   int nprobe = 1;
-  float fraud_score = ivf_score(idx, QUERY, nprobe);
+  alignas(32) int16_t q16[STRIDE];
+  quantize_query(QUERY, idx.scale, q16);
+  float fraud_score = ivf_score(idx, q16, nprobe);
   bool  approved    = fraud_score < 0.6f;
 
   cout << "nprobe=" << nprobe

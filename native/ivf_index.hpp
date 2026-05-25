@@ -1,16 +1,29 @@
-// IVF index: loads ivf.bin via mmap and answers kNN queries (k=5).
+// IVF index — int16 quantized layout.
 //
-// Typical use:
-//     IvfIndex idx;
-//     if (!load_index("ivf.bin", idx)) { ... }
-//     float score = ivf_score(idx, query_14_floats);
-//     unload_index(idx);
+// Vectors and centroids are stored as int16 (one global scale; queries
+// quantized at request time using the same scale). dist² is computed in
+// integer space; top-K ordering is preserved because the transform is a
+// uniform linear scaling.
 //
-// The returned score is num_frauds / 5.0f. Caller decides the threshold.
+// Storage layout per ivf.bin:
+//   HEADER (20 bytes):
+//     uint32 K
+//     uint32 D    (always 14)
+//     uint32 N
+//     float  scale (q = round(v * scale), e.g. 32767 for normalized data)
+//   CENTROIDS:  K  × STRIDE × int16    (STRIDE=16 padded for AVX2)
+//   OFFSETS:    (K+1) × uint32
+//   VECTORS:    N  × STRIDE × int16
+//   LABELS:     N  × uint8
+//
+// The padded slots (DIM..STRIDE-1) are zero and contribute 0 to dist².
 
 #pragma once
 
+#include <algorithm>
 #include <cerrno>
+#include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <fcntl.h>
 #include <iostream>
@@ -19,75 +32,92 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-// std::experimental::simd is only implemented in libstdc++ (GCC).
-// Clang/libc++ ships the header but it's missing bits (e.g. reduce). Restrict to GCC.
-#if defined(__GNUC__) && !defined(__clang__) && __has_include(<experimental/simd>)
-#  include <experimental/simd>
-#  define IVF_HAS_SIMD 1
+#if defined(__AVX2__)
+#  include <immintrin.h>
+#  define IVF_HAS_AVX2 1
 #else
-#  define IVF_HAS_SIMD 0
+#  define IVF_HAS_AVX2 0
 #endif
 
 namespace ivf {
 
-#if IVF_HAS_SIMD
-namespace stdx = std::experimental;
-#endif
-
-constexpr uint32_t DIM   = 14;
-constexpr int      TOP_K = 5;
+constexpr uint32_t DIM    = 14;
+constexpr uint32_t STRIDE = 16;   // 14 dims padded to 16 int16 = 32 bytes, one AVX2 reg
+constexpr int      TOP_K  = 5;
 
 struct IvfIndex {
-  // mmap bookkeeping (for later unload)
   void *base   = nullptr;
   size_t size  = 0;
   int    fd    = -1;
 
-  // header (lido do arquivo)
   uint32_t K = 0;
   uint32_t D = 0;
   uint32_t N = 0;
+  float    scale = 1.0f;   // q = round(v * scale)
 
-  // pointers into each section of the mmap region
-  const float    *centroids = nullptr;
-  const uint32_t *offsets   = nullptr;
-  const float    *vectors   = nullptr;
+  const int16_t  *centroids = nullptr;  // K × STRIDE
+  const uint32_t *offsets   = nullptr;  // K + 1
+  const int16_t  *vectors   = nullptr;  // N × STRIDE
   const uint8_t  *labels    = nullptr;
 };
 
-// Squared L2 distance between two DIM-dim vectors.
+// Float-domain dist² — used at training time (k_means.cpp) on raw float
+// vectors before quantization. The production query path uses the int16
+// version below.
 static inline float dist_sq(const float *a, const float *b) {
-#if IVF_HAS_SIMD
-  using simd_f       = stdx::native_simd<float>;
-  constexpr size_t W = simd_f::size();
-
-  simd_f acc{0.0f};
-  size_t i = 0;
-  for (; i + W <= DIM; i += W) {
-    simd_f va(a + i, stdx::element_aligned);
-    simd_f vb(b + i, stdx::element_aligned);
-    simd_f diff = va - vb;
-    acc += diff * diff;
-  }
-  float result = stdx::reduce(acc);
-  for (; i < DIM; ++i) {
-    float diff = a[i] - b[i];
-    result += diff * diff;
-  }
-  return result;
-#else
-  // Fallback escalar (compilador auto-vetoriza com -O2 + DIM constexpr)
   float d = 0;
   for (uint32_t i = 0; i < DIM; ++i) {
     float diff = a[i] - b[i];
     d += diff * diff;
   }
   return d;
+}
+
+// Squared L2 distance in quantized int16 space. Returns int32 sum of squared
+// differences over STRIDE lanes (DIM real + STRIDE-DIM zeros, which add 0).
+// Max value: 14 dims × (2×32767)² = ~6.0e10 → fits int32 (2.1e9)? NO.
+// 14 × (65534)² = 6.01e10 — that EXCEEDS int32 range (2.1e9). We need int64.
+// In practice for normalized vectors the differences are small (each ~scale × 2),
+// but worst-case theoretical requires int64. Use int64_t for safety.
+static inline int64_t dist_sq(const int16_t *a, const int16_t *b) {
+#if IVF_HAS_AVX2
+  // Load 16 int16 from each (one full AVX2 256-bit register).
+  __m256i va = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(a));
+  __m256i vb = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(b));
+  __m256i diff = _mm256_sub_epi16(va, vb);      // 16 int16 differences
+  // vpmaddwd: multiplies pairs of int16, sums adjacent pairs into int32.
+  // 16 int16 in → 8 int32 out (each = diff[2k]*diff[2k] + diff[2k+1]*diff[2k+1]).
+  __m256i sq   = _mm256_madd_epi16(diff, diff);
+
+  // Horizontal sum 8 int32 → scalar (kept in int64 to be safe).
+  __m128i lo = _mm256_castsi256_si128(sq);
+  __m128i hi = _mm256_extracti128_si256(sq, 1);
+  __m128i s4 = _mm_add_epi32(lo, hi);            // 4 int32
+  s4 = _mm_hadd_epi32(s4, s4);                   // 2 int32
+  s4 = _mm_hadd_epi32(s4, s4);                   // 1 int32 (replicated)
+  return static_cast<int64_t>(static_cast<int32_t>(_mm_cvtsi128_si32(s4)));
+#else
+  int64_t d = 0;
+  for (uint32_t i = 0; i < DIM; ++i) {
+    int32_t x = static_cast<int32_t>(a[i]) - static_cast<int32_t>(b[i]);
+    d += static_cast<int64_t>(x) * static_cast<int64_t>(x);
+  }
+  return d;
 #endif
 }
 
-// Opens, mmaps, and validates the header. Returns true on success.
-// On failure, idx is left in an invalid state (do not call unload).
+// Quantize a float query into a padded int16 buffer (STRIDE slots).
+// out[DIM..STRIDE-1] are zeroed by the caller (or here).
+static inline void quantize_query(const float *q, float scale, int16_t *out) {
+  for (uint32_t d = 0; d < DIM; ++d) {
+    float v = std::round(q[d] * scale);
+    if (v >  32767.0f) v =  32767.0f;
+    if (v < -32767.0f) v = -32767.0f;
+    out[d] = static_cast<int16_t>(v);
+  }
+  for (uint32_t d = DIM; d < STRIDE; ++d) out[d] = 0;
+}
+
 inline bool load_index(const char *path, IvfIndex &idx) {
   idx.fd = open(path, O_RDONLY);
   if (idx.fd == -1) {
@@ -96,38 +126,19 @@ inline bool load_index(const char *path, IvfIndex &idx) {
   }
 
   struct stat st;
-  if (fstat(idx.fd, &st) == -1) {
-    close(idx.fd);
-    return false;
-  }
+  if (fstat(idx.fd, &st) == -1) { close(idx.fd); return false; }
   idx.size = st.st_size;
 
   idx.base = mmap(nullptr, idx.size, PROT_READ, MAP_PRIVATE, idx.fd, 0);
-  if (idx.base == MAP_FAILED) {
-    close(idx.fd);
-    return false;
-  }
-
-  // Hint to the kernel: access pattern is random (not sequential)
+  if (idx.base == MAP_FAILED) { close(idx.fd); return false; }
   madvise(idx.base, idx.size, MADV_RANDOM);
 
-  // One-shot boot log: dev/inode/size + mapped range. Two containers running
-  // the same image show identical inode + identical mapped address — proof
-  // that the kernel can share page-cache pages across both processes.
-  std::cerr << "ivf.mmap path=" << path
-            << " dev=" << st.st_dev
-            << " inode=" << st.st_ino
-            << " size=" << st.st_size
-            << " addr=" << idx.base
-            << "-" << static_cast<const void *>(
-                       static_cast<const char *>(idx.base) + idx.size)
-            << std::endl;
-
-  const char     *p   = static_cast<const char *>(idx.base);
-  const uint32_t *hdr = reinterpret_cast<const uint32_t *>(p);
-  idx.K = hdr[0];
-  idx.D = hdr[1];
-  idx.N = hdr[2];
+  const char *p = static_cast<const char *>(idx.base);
+  const uint32_t *u = reinterpret_cast<const uint32_t *>(p);
+  idx.K = u[0];
+  idx.D = u[1];
+  idx.N = u[2];
+  idx.scale = *reinterpret_cast<const float *>(p + 12);
 
   if (idx.D != DIM) {
     std::cerr << "header DIM=" << idx.D << ", expected " << DIM << std::endl;
@@ -136,12 +147,31 @@ inline bool load_index(const char *path, IvfIndex &idx) {
     return false;
   }
 
-  idx.centroids = reinterpret_cast<const float *>(p + 12);
-  idx.offsets   = reinterpret_cast<const uint32_t *>(p + 12 + idx.K * DIM * 4);
-  idx.vectors   = reinterpret_cast<const float *>(
-      p + 12 + idx.K * DIM * 4 + (idx.K + 1) * 4);
-  idx.labels = reinterpret_cast<const uint8_t *>(
-      p + 12 + idx.K * DIM * 4 + (idx.K + 1) * 4 + idx.N * DIM * 4);
+  std::cerr << "ivf.mmap path=" << path
+            << " dev=" << st.st_dev
+            << " inode=" << st.st_ino
+            << " size=" << st.st_size
+            << " K=" << idx.K << " N=" << idx.N
+            << " scale=" << idx.scale
+            << " (int16, STRIDE=" << STRIDE << ")"
+            << " addr=" << idx.base
+            << "-" << static_cast<const void *>(
+                       static_cast<const char *>(idx.base) + idx.size)
+            << std::endl;
+
+  // Section offsets (in bytes from base):
+  //   centroids: 20 (= 12 hdr + 4 scale, aligned for int16 — fine)
+  //   offsets:   20 + K * STRIDE * 2
+  //   vectors:   offsets + (K+1) * 4
+  //   labels:    vectors + N * STRIDE * 2
+  const size_t cent_bytes = static_cast<size_t>(idx.K) * STRIDE * sizeof(int16_t);
+  const size_t off_bytes  = (static_cast<size_t>(idx.K) + 1) * sizeof(uint32_t);
+  const size_t vec_bytes  = static_cast<size_t>(idx.N) * STRIDE * sizeof(int16_t);
+
+  idx.centroids = reinterpret_cast<const int16_t *>(p + 20);
+  idx.offsets   = reinterpret_cast<const uint32_t *>(p + 20 + cent_bytes);
+  idx.vectors   = reinterpret_cast<const int16_t *>(p + 20 + cent_bytes + off_bytes);
+  idx.labels    = reinterpret_cast<const uint8_t *>(p + 20 + cent_bytes + off_bytes + vec_bytes);
 
   return true;
 }
@@ -152,29 +182,28 @@ inline void unload_index(IvfIndex &idx) {
   idx = {};
 }
 
-// Finds the nearest centroid to the query (brute force across the K centroids).
-inline uint32_t nearest_centroid(const IvfIndex &idx, const float *query) {
-  float    best = std::numeric_limits<float>::max();
+// Finds the nearest centroid to a quantized query (brute force across K).
+inline uint32_t nearest_centroid(const IvfIndex &idx, const int16_t *query) {
+  int64_t  best = std::numeric_limits<int64_t>::max();
   uint32_t best_c = 0;
   for (uint32_t i = 0; i < idx.K; ++i) {
-    float d = dist_sq(query, idx.centroids + i * DIM);
+    int64_t d = dist_sq(query, idx.centroids + i * STRIDE);
     if (d < best) { best = d; best_c = i; }
   }
   return best_c;
 }
 
-// Top-N nearest centroids. out_clusters[] must have capacity N.
-// Result is sorted ascending by distance. Insertion sort over N.
-inline void top_n_centroids(const IvfIndex &idx, const float *query,
+// Top-N nearest centroids. out_clusters[] must have capacity nprobe.
+inline void top_n_centroids(const IvfIndex &idx, const int16_t *query,
                             int nprobe, uint32_t *out_clusters) {
-  float *top_d = static_cast<float *>(alloca(nprobe * sizeof(float)));
+  int64_t *top_d = static_cast<int64_t *>(alloca(nprobe * sizeof(int64_t)));
   for (int k = 0; k < nprobe; ++k) {
-    top_d[k]        = std::numeric_limits<float>::max();
+    top_d[k]        = std::numeric_limits<int64_t>::max();
     out_clusters[k] = 0;
   }
 
   for (uint32_t i = 0; i < idx.K; ++i) {
-    float d = dist_sq(query, idx.centroids + i * DIM);
+    int64_t d = dist_sq(query, idx.centroids + i * STRIDE);
     if (d >= top_d[nprobe - 1]) continue;
 
     int p = nprobe - 1;
@@ -188,17 +217,15 @@ inline void top_n_centroids(const IvfIndex &idx, const float *query,
   }
 }
 
-// Updates the global top-K in a single pass over one cluster. Caller keeps
-// the state (top_d, out_idx) across calls to scan multiple clusters.
-inline void merge_top5_from_cluster(const IvfIndex &idx, const float *query,
+inline void merge_top5_from_cluster(const IvfIndex &idx, const int16_t *query,
                                     uint32_t cluster,
-                                    float top_d[TOP_K],
+                                    int64_t top_d[TOP_K],
                                     uint32_t out_idx[TOP_K]) {
   uint32_t begin = idx.offsets[cluster];
   uint32_t end   = idx.offsets[cluster + 1];
 
   for (uint32_t i = begin; i < end; ++i) {
-    float d = dist_sq(query, idx.vectors + i * DIM);
+    int64_t d = dist_sq(query, idx.vectors + i * STRIDE);
     if (d >= top_d[TOP_K - 1]) continue;
 
     int p = TOP_K - 1;
@@ -212,14 +239,13 @@ inline void merge_top5_from_cluster(const IvfIndex &idx, const float *query,
   }
 }
 
-// End-to-end score: finds the nprobe nearest centroids, global top-5 across
-// all of their vectors, returns fraud count / 5.
-inline float ivf_score(const IvfIndex &idx, const float *query, int nprobe = 1) {
-  // Global top-5 state, persistent across clusters
-  float    top_d[TOP_K];
+// End-to-end score: nprobe nearest centroids → global top-5 → fraud count / 5.
+// `query` is the int16-quantized query (STRIDE lanes).
+inline float ivf_score(const IvfIndex &idx, const int16_t *query, int nprobe = 1) {
+  int64_t  top_d[TOP_K];
   uint32_t top_i[TOP_K];
   for (int k = 0; k < TOP_K; ++k) {
-    top_d[k] = std::numeric_limits<float>::max();
+    top_d[k] = std::numeric_limits<int64_t>::max();
     top_i[k] = 0;
   }
 

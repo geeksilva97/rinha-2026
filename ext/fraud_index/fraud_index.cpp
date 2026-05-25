@@ -412,9 +412,13 @@ void parse_payload(const char *raw, size_t len, float *out) {
 }
 
 // Counts how many of the top-5 nearest references are labeled fraud.
-// Effectively ivf_score(...) * 5 but returned as an int 0..5.
+// The query comes in float (parsed from the payload); we quantize to
+// the same int16 scale the index was built with, then run ivf_score
+// in integer space.
 int fraud_count(const IvfIndex &idx, const float *query, int nprobe) {
-  return static_cast<int>(ivf_score(idx, query, nprobe) * static_cast<float>(TOP_K) + 0.5f);
+  alignas(32) int16_t q16[STRIDE];
+  quantize_query(query, idx.scale, q16);
+  return static_cast<int>(ivf_score(idx, q16, nprobe) * static_cast<float>(TOP_K) + 0.5f);
 }
 
 } // anon namespace
@@ -439,10 +443,12 @@ static VALUE rb_fraud_index_score(VALUE self, VALUE arr) {
   if (!g_loaded) rb_raise(rb_eRuntimeError, "FraudIndex: index not loaded");
   if (RARRAY_LEN(arr) != static_cast<long>(DIM))
     rb_raise(rb_eArgError, "FraudIndex.score: need %u floats, got %ld", DIM, RARRAY_LEN(arr));
-  float q[DIM];
+  float qf[DIM];
   for (uint32_t i = 0; i < DIM; ++i)
-    q[i] = static_cast<float>(NUM2DBL(rb_ary_entry(arr, i)));
-  return DBL2NUM(ivf_score(g_index, q, g_nprobe));
+    qf[i] = static_cast<float>(NUM2DBL(rb_ary_entry(arr, i)));
+  alignas(32) int16_t q16[STRIDE];
+  quantize_query(qf, g_index.scale, q16);
+  return DBL2NUM(ivf_score(g_index, q16, g_nprobe));
 }
 
 // FraudIndex.fraud_count(vec14) → Integer 0..5

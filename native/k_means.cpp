@@ -120,59 +120,90 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  // ── int16 quantization ─────────────────────────────────────────────
+  // Vectors are normalized (most dims in [-1,1] or [0,1]; one in [0,0.05]).
+  // Find a single global scale that maps the largest-magnitude dim to the
+  // full int16 range. dist² ordering is preserved (linear transform).
+  float global_abs_max = 0.0f;
+  for (const auto &p : points)
+    for (uint32_t d = 0; d < DIM; ++d)
+      global_abs_max = std::max(global_abs_max, std::abs(p[d]));
+  for (const auto &c : centroids)
+    for (uint32_t d = 0; d < DIM; ++d)
+      global_abs_max = std::max(global_abs_max, std::abs(c[d]));
+
+  // 32767 leaves the symmetric int16 range [-32767, 32767] (skip -32768).
+  const float scale = (global_abs_max > 0.0f) ? (32767.0f / global_abs_max) : 1.0f;
+  cout << "quant: global_abs_max=" << global_abs_max << " scale=" << scale << endl;
+
+  auto qz = [scale](float v) -> int16_t {
+    float q = std::round(v * scale);
+    if (q >  32767.0f) q =  32767.0f;
+    if (q < -32767.0f) q = -32767.0f;
+    return static_cast<int16_t>(q);
+  };
+
+  // Storage stride: pad DIM=14 → 16 so each vector is one 32-byte AVX2 reg.
+  // Last two int16 slots are zeroed; they contribute 0 to (a-b)² and
+  // disappear from the SIMD dist_sq automatically.
+  constexpr uint32_t STRIDE = 16;
+
   // save file
   ofstream out("ivf.bin", ios::binary);
-
-  if (!out) {
-    cerr << "Error while opening the file for writing";
-    return 1;
-  }
+  if (!out) { cerr << "Error while opening the file for writing"; return 1; }
 
   uint32_t N = static_cast<uint32_t>(data.size());
 
-  // HEADER
-  out.write(reinterpret_cast<const char *>(&K), sizeof(K));
-  out.write(reinterpret_cast<const char *>(&DIM), sizeof(DIM));
-  out.write(reinterpret_cast<const char *>(&N), sizeof(N));
+  // HEADER (20 bytes)
+  out.write(reinterpret_cast<const char *>(&K),      sizeof(K));
+  out.write(reinterpret_cast<const char *>(&DIM),    sizeof(DIM));
+  out.write(reinterpret_cast<const char *>(&N),      sizeof(N));
+  out.write(reinterpret_cast<const char *>(&scale),  sizeof(scale));   // NEW
+  // (STRIDE=16 is implicit from DIM=14 → next power of 2 with ≥DIM lanes
+  // for AVX2 alignment. Reader hardcodes it.)
 
-  // CENTROIDS (K * DIM floats)
-  for (const auto &centroid : centroids) {
-    out.write(reinterpret_cast<const char *>(centroid.data()),
-              DIM * sizeof(float));
+  // CENTROIDS (K × STRIDE × int16)
+  {
+    std::vector<int16_t> buf(STRIDE, 0);
+    for (const auto &centroid : centroids) {
+      for (uint32_t d = 0; d < DIM; ++d) buf[d] = qz(centroid[d]);
+      // STRIDE-DIM tail stays 0
+      out.write(reinterpret_cast<const char *>(buf.data()),
+                STRIDE * sizeof(int16_t));
+    }
   }
 
   // OFFSETS (prefix-sum dos counts)
   std::vector<uint32_t> offsets(K + 1);
   offsets[0] = 0;
-  for (uint32_t j = 0; j < K; ++j) {
-    offsets[j + 1] = offsets[j] + count[j];
-  }
+  for (uint32_t j = 0; j < K; ++j) offsets[j + 1] = offsets[j] + count[j];
   out.write(reinterpret_cast<const char *>(offsets.data()),
             offsets.size() * sizeof(uint32_t));
 
-  // VECTORS sorted by cluster (using cursor array)
+  // VECTORS sorted by cluster (using cursor array), STRIDE int16 each
   auto cursor = offsets;
-  std::vector<float> ordered_vectors(N * DIM);
+  std::vector<int16_t> ordered_vectors(N * STRIDE, 0); // zero-init for tail
   std::vector<uint8_t> ordered_labels(N);
 
   for (uint32_t i = 0; i < N; ++i) {
     uint32_t cluster_index = assignments[i];
     uint32_t pos = cursor[cluster_index]++;
-
     for (uint32_t d = 0; d < DIM; ++d)
-      ordered_vectors[pos * DIM + d] = points[i][d];
-
+      ordered_vectors[pos * STRIDE + d] = qz(points[i][d]);
+    // tail (d = DIM..STRIDE-1) already 0
     ordered_labels[pos] = labels[i];
   }
 
   out.write(reinterpret_cast<const char *>(ordered_vectors.data()),
-            ordered_vectors.size() * sizeof(float));
+            ordered_vectors.size() * sizeof(int16_t));
 
   // LABELS
   out.write(reinterpret_cast<const char *>(ordered_labels.data()),
             ordered_labels.size() * sizeof(uint8_t));
 
   out.close();
+  cout << "wrote ivf.bin: K=" << K << " D=" << DIM << " STRIDE=" << STRIDE
+       << " N=" << N << " scale=" << scale << endl;
 
   return 0;
 }
