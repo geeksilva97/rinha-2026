@@ -17,6 +17,7 @@ services:
       - WARMUP=${WARMUP:-10}
       - RACK_MAX_THREADS=${RACK_MAX_THREADS:-4}
       - WEB_CONCURRENCY=${WEB_CONCURRENCY:-1}
+      - ACCEPTORS=${ACCEPTORS:-2}
     volumes:
       - sock:/run/sock
       # ivf.bin lives inside the image (COPY+gunzip at build).
@@ -45,6 +46,7 @@ services:
       - WARMUP=${WARMUP:-10}
       - RACK_MAX_THREADS=${RACK_MAX_THREADS:-4}
       - WEB_CONCURRENCY=${WEB_CONCURRENCY:-1}
+      - ACCEPTORS=${ACCEPTORS:-2}
     healthcheck:
       test: ["CMD-SHELL", "test -S /run/sock/api2.sock"]
       interval: 1s
