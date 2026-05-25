@@ -1,0 +1,13 @@
+# Override: run server_threadpool.rb instead of Puma/Ractor.
+# Use with: docker compose -f docker-compose.yml -f docker-compose.threadpool.yml up
+services:
+  api1:
+    command: ["bundle", "exec", "ruby", "-W0", "/app/server_threadpool.rb"]
+    volumes:
+      - sock:/run/sock
+      - ./server_threadpool.rb:/app/server_threadpool.rb:ro
+  api2:
+    command: ["bundle", "exec", "ruby", "-W0", "/app/server_threadpool.rb"]
+    volumes:
+      - sock:/run/sock
+      - ./server_threadpool.rb:/app/server_threadpool.rb:ro
