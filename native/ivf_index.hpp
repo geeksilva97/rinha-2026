@@ -6,7 +6,7 @@
 // uniform linear scaling.
 //
 // Storage layout per ivf.bin:
-//   HEADER (20 bytes):
+//   HEADER (16 bytes):
 //     uint32 K
 //     uint32 D    (always 14)
 //     uint32 N
@@ -168,10 +168,10 @@ inline bool load_index(const char *path, IvfIndex &idx) {
   const size_t off_bytes  = (static_cast<size_t>(idx.K) + 1) * sizeof(uint32_t);
   const size_t vec_bytes  = static_cast<size_t>(idx.N) * STRIDE * sizeof(int16_t);
 
-  idx.centroids = reinterpret_cast<const int16_t *>(p + 20);
-  idx.offsets   = reinterpret_cast<const uint32_t *>(p + 20 + cent_bytes);
-  idx.vectors   = reinterpret_cast<const int16_t *>(p + 20 + cent_bytes + off_bytes);
-  idx.labels    = reinterpret_cast<const uint8_t *>(p + 20 + cent_bytes + off_bytes + vec_bytes);
+  idx.centroids = reinterpret_cast<const int16_t *>(p + 16);
+  idx.offsets   = reinterpret_cast<const uint32_t *>(p + 16 + cent_bytes);
+  idx.vectors   = reinterpret_cast<const int16_t *>(p + 16 + cent_bytes + off_bytes);
+  idx.labels    = reinterpret_cast<const uint8_t *>(p + 16 + cent_bytes + off_bytes + vec_bytes);
 
   return true;
 }

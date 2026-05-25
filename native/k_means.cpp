@@ -154,7 +154,7 @@ int main(int argc, char *argv[]) {
 
   uint32_t N = static_cast<uint32_t>(data.size());
 
-  // HEADER (20 bytes)
+  // HEADER (16 bytes: K, D, N, scale)
   out.write(reinterpret_cast<const char *>(&K),      sizeof(K));
   out.write(reinterpret_cast<const char *>(&DIM),    sizeof(DIM));
   out.write(reinterpret_cast<const char *>(&N),      sizeof(N));
