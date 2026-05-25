@@ -6,6 +6,9 @@ $INCFLAGS << " -I#{native_dir}"
 
 # C++ flags
 $CXXFLAGS << ' -std=c++26 -O2 -Wall'
+# Debug symbols + frame pointer for perf/profiling.
+# Enable via PROFILE=1 to avoid bloating the production .so.
+$CXXFLAGS << ' -g -fno-omit-frame-pointer' if ENV['PROFILE'] == '1'
 
 # -march=haswell enables AVX2 + FMA + BMI2 (Mac mini 2014, rinha target).
 # Can break under Rosetta/QEMU (which don't emulate AVX2). Override via env:

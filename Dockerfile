@@ -1,11 +1,13 @@
 FROM --platform=linux/amd64 ruby:4.0.2-slim
 
 ARG CXX_MARCH=haswell
+ARG PROFILE=0
 ENV BUNDLE_WITHOUT="development:test" \
     BUNDLE_DEPLOYMENT="true" \
     RACK_ENV=production \
     IVF_PATH=/data/ivf.bin \
-    CXX_MARCH=${CXX_MARCH}
+    CXX_MARCH=${CXX_MARCH} \
+    PROFILE=${PROFILE}
 
 WORKDIR /app
 
