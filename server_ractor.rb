@@ -99,8 +99,13 @@ end
 sock_path = ENV.fetch('SOCK')
 File.unlink(sock_path) if File.exist?(sock_path)
 server = UNIXServer.new(sock_path)
+# Bump listen() backlog — UNIXServer.new defaults to SOMAXCONN or 128
+# depending on libc. Under 900 RPS bursts, a small backlog can silently
+# drop connections in the kernel before we accept them. Cap requested
+# at 1024 (kernel enforces min(this, /proc/sys/net/core/somaxconn)).
+server.listen(1024)
 File.chmod(0o666, sock_path)
-warn "Listening on unix://#{sock_path}"
+warn "Listening on unix://#{sock_path} (backlog=1024)"
 
 # Pool size — kept under the existing ACCEPTORS env (semantic shift: was
 # "accept threads", now "worker Ractors"). Default 4 matched the
