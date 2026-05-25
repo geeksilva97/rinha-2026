@@ -109,10 +109,12 @@ static inline int64_t dist_sq(const int16_t *a, const int16_t *b) {
 // Quantize a float query into a padded int16 buffer (STRIDE slots).
 // out[DIM..STRIDE-1] are zeroed by the caller (or here).
 static inline void quantize_query(const float *q, float scale, int16_t *out) {
+  // Caps at ±16383 (= INT16_MAX/2). Together with stored vectors quantized
+  // at the same cap, max diff is 32766 → fits int16, avoids vpsubw wrap.
   for (uint32_t d = 0; d < DIM; ++d) {
     float v = std::round(q[d] * scale);
-    if (v >  32767.0f) v =  32767.0f;
-    if (v < -32767.0f) v = -32767.0f;
+    if (v >  16383.0f) v =  16383.0f;
+    if (v < -16383.0f) v = -16383.0f;
     out[d] = static_cast<int16_t>(v);
   }
   for (uint32_t d = DIM; d < STRIDE; ++d) out[d] = 0;

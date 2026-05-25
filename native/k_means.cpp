@@ -132,14 +132,18 @@ int main(int argc, char *argv[]) {
     for (uint32_t d = 0; d < DIM; ++d)
       global_abs_max = std::max(global_abs_max, std::abs(c[d]));
 
-  // 32767 leaves the symmetric int16 range [-32767, 32767] (skip -32768).
-  const float scale = (global_abs_max > 0.0f) ? (32767.0f / global_abs_max) : 1.0f;
-  cout << "quant: global_abs_max=" << global_abs_max << " scale=" << scale << endl;
+  // Use 16383 (= INT16_MAX/2) so that max_diff = 2*16383 = 32766 stays
+  // within int16. Otherwise `_mm256_sub_epi16` wraps and `_mm256_madd_epi16`
+  // computes garbage on (q_a - q_b) for extreme pairs.
+  // Also keeps sum-of-2-squares per madd lane within int32: 2 * 32766² ≈ 2.147e9 < INT32_MAX.
+  const float scale = (global_abs_max > 0.0f) ? (16383.0f / global_abs_max) : 1.0f;
+  cout << "quant: global_abs_max=" << global_abs_max << " scale=" << scale
+       << " (capped at 16383 to keep diff within int16)" << endl;
 
   auto qz = [scale](float v) -> int16_t {
     float q = std::round(v * scale);
-    if (q >  32767.0f) q =  32767.0f;
-    if (q < -32767.0f) q = -32767.0f;
+    if (q >  16383.0f) q =  16383.0f;
+    if (q < -16383.0f) q = -16383.0f;
     return static_cast<int16_t>(q);
   };
 
