@@ -7,7 +7,7 @@ name: rinha-fraud-detection
 
 services:
   api1: &api
-    image: ghcr.io/geeksilva97/rinha-2026-api@sha256:27641c6e363250db0139c76c5139b5f0fdc992e36eea7ae7bc1075f9e70daaa7
+    image: ghcr.io/geeksilva97/rinha-2026-api@sha256:c18cce696dcec36a7197174b3bfeda9dca7a1f14e5b850bd83a9e23c026930b4
     platform: linux/amd64
     restart: always
     command: ["bundle", "exec", "ruby", "-W0", "/app/server_ractor.rb"]
@@ -16,7 +16,7 @@ services:
       - IVF_PATH=/data/ivf.bin
       - NPROBE=70
       - WARMUP=10
-      - ACCEPTORS=4
+      - ACCEPTORS=2
     volumes:
       - sock:/run/sock
     healthcheck:
@@ -38,7 +38,7 @@ services:
       - IVF_PATH=/data/ivf.bin
       - NPROBE=70
       - WARMUP=10
-      - ACCEPTORS=4
+      - ACCEPTORS=2
     healthcheck:
       test: ["CMD-SHELL", "test -S /run/sock/api2.sock"]
       interval: 1s
