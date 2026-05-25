@@ -105,7 +105,7 @@ warn "Listening on unix://#{sock_path}"
 # Pool size — kept under the existing ACCEPTORS env (semantic shift: was
 # "accept threads", now "worker Ractors"). Default 4 matched the
 # spawn-per-request sweep sweet spot on the VM.
-ACCEPTORS = Integer(ENV.fetch('ACCEPTORS', '4'))
+ACCEPTORS = Integer(ENV.fetch('ACCEPTORS', '2'))
 warn "Worker pool size: #{ACCEPTORS}"
 
 workers = ACCEPTORS.times.map { Ractor.new(&WORKER_BODY) }
