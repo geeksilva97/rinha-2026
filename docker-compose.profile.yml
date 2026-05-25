@@ -1,0 +1,8 @@
+# Profiling override: swap nginx config to one with detailed access log
+# and bind-mount a host dir to capture the log.
+services:
+  lb:
+    volumes:
+      - ./nginx.profile.conf:/etc/nginx/nginx.conf:ro
+      - ./profile-logs:/var/log/nginx
+      - sock:/run/sock
