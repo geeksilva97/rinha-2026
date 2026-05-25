@@ -143,6 +143,68 @@ container), the math flips: parallelism gain becomes large, GVL becomes
 the bottleneck for Threads, and Ractors pay off. We're not in that
 world.
 
+## The Mac mini reversal
+
+When we shipped the Thread pool (`ACCEPTORS=4`) to the official rinha
+test, it **regressed catastrophically**:
+
+| target | concurrency / N | score | p99 |
+|---|---|---:|---:|
+| VM (4 vCPU = 2 phys + HT) | Thread pool / 4 | **5548** | **1.96 ms** |
+| Mac mini real (#6631)     | Thread pool / 4 | **−2775** | **2001 ms (cutoff)** + 584 http errors |
+| Mac mini real (#6635)     | Ractor pool / 2 | 4257 | 24.09 ms |
+| Mac mini real (#6651)     | Thread pool / 2 | 4151 | 30.72 ms |
+| Mac mini real (#6556)     | Ractor pool / 2 | **4362** | **18.88 ms** ← settled config |
+
+Two surprises:
+
+1. **Thread pool ACC=4 fell off a cliff on Mac mini.** The VM has 4
+   vCPUs (2 physical + hyperthreading); the Mac mini has 2 physical
+   cores. With 4 worker threads competing for 2 phys cores, kernel
+   context-switch cost amplified enough that ~1% of requests piled up
+   past the 2001ms timeout. CFS quota was the same (0.4 CPU); what
+   differed was the *number of cores the scheduler had to work with*.
+
+2. **Even at ACC=2, Threads lost to Ractors on Mac mini.** Same code
+   path, same handler logic. The plausible explanation is GC: Thread
+   pool shares one Ruby heap across all workers, so a minor GC pause
+   freezes every worker briefly. On a 2-core box where each pause is
+   already a visible chunk of wall time relative to the per-request
+   budget, those pauses show up at the tail. Ractor pool splits the
+   heap per worker — a Ractor's GC freezes only itself, the others
+   keep serving.
+
+The Mac mini effectively tightens *both* axes that decide the
+Thread-vs-Ractor tradeoff:
+- Fewer cores → context-switching gets expensive faster.
+- 2-core throughput is tight enough that any STW GC pause is visible.
+
+So the corrected mental model now includes a **target-machine** column:
+
+```
+cost-per-handoff × handoffs-per-second
++ benefits-from-parallelism  (CFS-capped here)
++ STW GC tail × pauses-per-second × concurrency-of-pause-victims
+```
+
+For Mac mini, the third term grows. Per-Ractor heaps absorb that cost.
+Threads pay it head-on.
+
+### Implication
+
+VM benchmarks are a *necessary* but **not sufficient** indicator of
+Mac mini behavior. The VM agrees with the Mac mini on direction for
+algorithmic changes (int16, adaptive nprobe, SoA — all proportional
+gains on both), but disagrees on concurrency-model fine-tuning. When
+two configs are close on the VM, decide by hardware similarity: 2
+physical cores on Mac mini is the real constraint.
+
+The settled production config (issue #6556 onward) is:
+
+- `server_ractor.rb` with `ACCEPTORS=2`
+- int16 IVF + `FAST_NPROBE=5` / `NPROBE=70` adaptive
+- nginx listen 1024, healthcheck-gated LB
+
 ## See also
 
 - `server_ractor.rb`, `server_threadpool.rb` — the two implementations.
