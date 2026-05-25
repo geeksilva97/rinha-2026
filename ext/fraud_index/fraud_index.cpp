@@ -10,6 +10,7 @@
 
 #include "ivf_index.hpp"
 #include <ruby.h>
+#include <atomic>
 #include <ctime>
 #include <cstdint>
 
@@ -19,6 +20,19 @@ using namespace ivf;
 static IvfIndex g_index;
 static bool     g_loaded = false;
 static int      g_nprobe = 1;
+
+// Lightweight per-call timing. relaxed loads/stores are fine — we only
+// read these in FraudIndex.stats and a small atomic skew is acceptable
+// for diagnostics. Costs ~30ns per request (clock_gettime + two adds).
+static std::atomic<uint64_t> g_count_calls{0};
+static std::atomic<uint64_t> g_total_ns{0};
+static std::atomic<uint64_t> g_max_ns{0};
+
+static inline uint64_t now_ns() {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return static_cast<uint64_t>(ts.tv_sec) * 1000000000ull + ts.tv_nsec;
+}
 
 // ─── Payload parser ──────────────────────────────────────────────────────────
 namespace {
@@ -450,9 +464,37 @@ static VALUE rb_fraud_index_fraud_count_payload(VALUE self, VALUE body) {
   (void)self;
   Check_Type(body, T_STRING);
   if (!g_loaded) rb_raise(rb_eRuntimeError, "FraudIndex: index not loaded");
+  uint64_t t0 = now_ns();
   float q[DIM];
   parse_payload(RSTRING_PTR(body), static_cast<size_t>(RSTRING_LEN(body)), q);
-  return INT2FIX(fraud_count(g_index, q, g_nprobe));
+  int fc = fraud_count(g_index, q, g_nprobe);
+  uint64_t dt = now_ns() - t0;
+  g_count_calls.fetch_add(1, std::memory_order_relaxed);
+  g_total_ns.fetch_add(dt, std::memory_order_relaxed);
+  uint64_t prev = g_max_ns.load(std::memory_order_relaxed);
+  while (dt > prev && !g_max_ns.compare_exchange_weak(prev, dt, std::memory_order_relaxed)) {}
+  return INT2FIX(fc);
+}
+
+static VALUE rb_fraud_index_stats(VALUE self) {
+  (void)self;
+  VALUE h = rb_hash_new();
+  uint64_t calls = g_count_calls.load(std::memory_order_relaxed);
+  uint64_t total = g_total_ns.load(std::memory_order_relaxed);
+  uint64_t max   = g_max_ns.load(std::memory_order_relaxed);
+  rb_hash_aset(h, ID2SYM(rb_intern("calls")),     ULL2NUM(calls));
+  rb_hash_aset(h, ID2SYM(rb_intern("total_ns")),  ULL2NUM(total));
+  rb_hash_aset(h, ID2SYM(rb_intern("max_ns")),    ULL2NUM(max));
+  rb_hash_aset(h, ID2SYM(rb_intern("avg_ns")),    ULL2NUM(calls ? total / calls : 0));
+  return h;
+}
+
+static VALUE rb_fraud_index_stats_reset(VALUE self) {
+  (void)self;
+  g_count_calls.store(0, std::memory_order_relaxed);
+  g_total_ns.store(0, std::memory_order_relaxed);
+  g_max_ns.store(0, std::memory_order_relaxed);
+  return Qtrue;
 }
 
 // FraudIndex.parse_payload(body, out_array) — for parity testing only.
@@ -507,6 +549,8 @@ void Init_fraud_index(void) {
   rb_define_singleton_method(mod, "parse_payload",        RUBY_METHOD_FUNC(rb_fraud_index_parse_payload),         2);
   rb_define_singleton_method(mod, "loaded?",              RUBY_METHOD_FUNC(rb_fraud_index_loaded),                0);
   rb_define_singleton_method(mod, "nprobe",               RUBY_METHOD_FUNC(rb_fraud_index_get_nprobe),            0);
+  rb_define_singleton_method(mod, "stats",                RUBY_METHOD_FUNC(rb_fraud_index_stats),                 0);
+  rb_define_singleton_method(mod, "stats_reset",          RUBY_METHOD_FUNC(rb_fraud_index_stats_reset),           0);
 #ifdef HAVE_RB_EXT_RACTOR_SAFE
   rb_ext_ractor_safe(false);
 #endif
