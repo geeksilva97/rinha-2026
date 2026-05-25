@@ -7,7 +7,7 @@ name: rinha-fraud-detection
 
 services:
   api1: &api
-    image: ghcr.io/geeksilva97/rinha-2026-api@sha256:c18cce696dcec36a7197174b3bfeda9dca7a1f14e5b850bd83a9e23c026930b4
+    image: ghcr.io/geeksilva97/rinha-2026-api@sha256:9174fbda542c5e1313c1dd8a4826b695bf55cc6dc75c22ee32070f7fb5cb4feb
     platform: linux/amd64
     restart: always
     command: ["bundle", "exec", "ruby", "-W0", "/app/server_ractor.rb"]
