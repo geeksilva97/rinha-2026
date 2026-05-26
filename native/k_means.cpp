@@ -16,10 +16,11 @@ using ivf::dist_sq;
 
 std::mt19937 rng(42); // seed
 
-// K is overridable via CLI for retraining experiments (e.g. K=4096).
-// Default 1700 matches the originally shipped ivf.bin.
+// K and T are overridable via CLI for retraining experiments.
+// Default K=1700 matches the originally shipped ivf.bin.
+// T=20 was the original cap; pass higher (e.g. 100) for tighter convergence.
 uint32_t K = 1700;
-constexpr uint32_t T = 20;
+uint32_t T = 20;
 constexpr uint32_t DIM = 14;
 // Early-exit threshold: sum of L2 movement across all centroids per iteration.
 // 1e-4 means the centroids essentially stopped moving (avg < ~6e-8 per centroid).
@@ -33,6 +34,7 @@ int main(int argc, char *argv[]) {
 
   std::string path = argv[1];
   if (argc >= 3) K = static_cast<uint32_t>(std::atoi(argv[2]));
+  if (argc >= 4) T = static_cast<uint32_t>(std::atoi(argv[3]));
   std::ifstream f(path);
   json data = json::parse(f);
   std::vector<std::vector<float>> points;
