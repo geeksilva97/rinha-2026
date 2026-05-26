@@ -108,22 +108,27 @@ server.listen(1024)
 File.chmod(0o666, sock_path)
 warn "Listening on unix://#{sock_path} (backlog=1024)"
 
-# Pool size — kept under the existing ACCEPTORS env (semantic shift: was
-# "accept threads", now "worker Ractors"). Default 4 matched the
-# spawn-per-request sweep sweet spot on the VM.
+# Pool size (worker Ractors) — env ACCEPTORS, default 2.
 ACCEPTORS = Integer(ENV.fetch('ACCEPTORS', '2'))
-warn "Worker pool size: #{ACCEPTORS}"
+# Number of accept threads dispatching to the pool — env ACCEPT_THREADS,
+# default 1. Each thread keeps its own local counter for round-robin
+# (no shared mutex; distribution is best-effort but workers stay full).
+ACCEPT_THREADS = Integer(ENV.fetch('ACCEPT_THREADS', '1'))
+warn "Worker pool size: #{ACCEPTORS}, accept threads: #{ACCEPT_THREADS}"
 
 workers = ACCEPTORS.times.map { Ractor.new(&WORKER_BODY) }
 
-# Single accept loop in the main thread. accept() is cheap; the costly
-# Ractor.new was the reason we ran multiple accept threads. With a pool,
-# main only does accept + a short send().
-i = 0
-loop do
-  client = server.accept
-  fd = client.fileno
-  client.autoclose = false       # ownership transfers to the worker Ractor
-  workers[i % ACCEPTORS].send(fd)
-  i += 1
+threads = ACCEPT_THREADS.times.map do |tid|
+  Thread.new do
+    i = tid   # offset start so multiple accept threads don't all pick worker 0 first
+    loop do
+      client = server.accept
+      fd = client.fileno
+      client.autoclose = false     # ownership transfers to the worker Ractor
+      workers[i % ACCEPTORS].send(fd)
+      i += 1
+    end
+  end
 end
+
+threads.each(&:join)
